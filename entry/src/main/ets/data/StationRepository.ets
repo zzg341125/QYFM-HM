@@ -12,6 +12,7 @@ import {
   PortableSettings
 } from '../models/Station';
 import { PRESET_STATIONS } from './PresetStations';
+import { orderStationsByBackup } from '../utils/BackupModel';
 
 const PREFERENCES_NAME: string = 'qyfm_store';
 const STATIONS_KEY: string = 'stations';
@@ -136,7 +137,7 @@ export class StationRepository {
     const backup: StationBackup = {
       schemaVersion: BACKUP_SCHEMA_VERSION,
       app: 'QYFM HarmonyOS',
-      appVersion: '1.0.0',
+      appVersion: '1.0.1',
       exportedAt: new Date().toISOString(),
       stationOrder: stationOrder,
       stations: stations.map((station: Station) => copyStation(station)),
@@ -158,20 +159,10 @@ export class StationRepository {
       }
     });
 
-    const ordered: Station[] = [];
-    const included = new Set<string>();
-    backup.stationOrder.forEach((id: string) => {
-      const station = unique.get(id);
-      if (station !== undefined && !included.has(id)) {
-        included.add(id);
-        ordered.push(station);
-      }
-    });
-    unique.forEach((station: Station, id: string) => {
-      if (!included.has(id)) {
-        ordered.push(station);
-      }
-    });
+    const ordered = orderStationsByBackup(
+      Array.from(unique.values()),
+      Array.isArray(backup.stationOrder) ? backup.stationOrder : []
+    );
 
     const defaultSettings = createDefaultSettings();
     if (backup.settings !== undefined) {

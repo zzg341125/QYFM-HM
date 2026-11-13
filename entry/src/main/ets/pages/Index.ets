@@ -10,6 +10,7 @@ import {
 import { StationRepository } from '../data/StationRepository';
 import { RadioController, RadioSnapshot, RadioStateListener } from '../services/RadioController';
 import { WebDavBackupService, WebDavConfig } from '../services/WebDavBackupService';
+import { WebDavBackupEntry } from '../utils/BackupModel';
 import { AppUpdateService, NativeUpdateInfo } from '../services/AppUpdateService';
 import { StationIconPicker } from '../services/StationIconPicker';
 import { LocalFileService } from '../services/LocalFileService';
@@ -53,6 +54,9 @@ struct Index {
   @State settingsStatus: string = '';
   @State updateInfo: NativeUpdateInfo | undefined = undefined;
   @State busy: boolean = false;
+  @State webDavBackups: WebDavBackupEntry[] = [];
+  @State selectedWebDavFile: string = '';
+  @State loadingWebDavVersions: boolean = false;
 
   private repository: StationRepository = new StationRepository();
   private radio: RadioController = RadioController.getInstance();
@@ -319,8 +323,10 @@ struct Index {
     try {
       await this.repository.saveSettings(this.settings);
       const json = this.repository.exportBackup(this.stations, this.settings);
-      await this.webDav.uploadBackup(this.webDavConfig(), json);
-      this.settingsStatus = '备份完成：已包含电台、台标与顺序';
+      const entry = await this.webDav.uploadBackup(this.webDavConfig(), json);
+      this.webDavBackups = await this.webDav.listBackups(this.webDavConfig());
+      this.selectedWebDavFile = entry.fileName;
+      this.settingsStatus = `备份完成：已生成 ${entry.fileName}`;
     } catch (error) {
       const businessError = error as BusinessError;
       this.settingsStatus = businessError.message;
@@ -333,10 +339,14 @@ struct Index {
     if (this.busy) {
       return;
     }
+    if (this.selectedWebDavFile.length === 0) {
+      this.settingsStatus = '请先从云端版本列表选择一个备份';
+      return;
+    }
     this.busy = true;
-    this.settingsStatus = '正在从 WebDAV 恢复…';
+    this.settingsStatus = `正在恢复 ${this.selectedWebDavFile}…`;
     try {
-      const json = await this.webDav.downloadBackup(this.webDavConfig());
+      const json = await this.webDav.downloadBackup(this.webDavConfig(), this.selectedWebDavFile);
       const result = this.repository.parseBackup(json);
       this.stations = result.stations;
       this.currentStation = this.stations.length > 0 ? this.stations[0] : undefined;
@@ -346,13 +356,53 @@ struct Index {
       await this.repository.saveSettings(this.settings);
       await this.radio.applySettings(this.settings);
       await this.radio.stop();
-      this.settingsStatus = '恢复完成：电台、台标与顺序均已恢复';
+      this.settingsStatus = '恢复完成：所选版本、台标与播放顺序均已恢复';
     } catch (error) {
       const businessError = error as BusinessError;
       this.settingsStatus = businessError.message;
     } finally {
       this.busy = false;
     }
+  }
+
+  private async refreshWebDavBackups(): Promise<void> {
+    if (this.loadingWebDavVersions || this.settings.webdavUrl.trim().length === 0) {
+      return;
+    }
+    this.loadingWebDavVersions = true;
+    this.settingsStatus = '正在读取云端备份版本…';
+    try {
+      this.webDavBackups = await this.webDav.listBackups(this.webDavConfig());
+      if (!this.webDavBackups.some((entry: WebDavBackupEntry) =>
+        entry.fileName === this.selectedWebDavFile)) {
+        this.selectedWebDavFile = this.webDavBackups.length > 0 ? this.webDavBackups[0].fileName : '';
+      }
+      this.settingsStatus = this.webDavBackups.length > 0
+        ? `找到 ${this.webDavBackups.length} 个云端备份`
+        : '云端暂无备份版本';
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.settingsStatus = businessError.message;
+    } finally {
+      this.loadingWebDavVersions = false;
+    }
+  }
+
+  private webDavVersionLabel(entry: WebDavBackupEntry): string {
+    if (entry.exportedAt.length === 0) {
+      return entry.fileName;
+    }
+    const date = new Date(entry.exportedAt);
+    if (Number.isNaN(date.getTime())) {
+      return entry.fileName;
+    }
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hour = date.getHours().toString().padStart(2, '0');
+    const minute = date.getMinutes().toString().padStart(2, '0');
+    const second = date.getSeconds().toString().padStart(2, '0');
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
   }
 
   private async checkForUpdates(manual: boolean): Promise<void> {
@@ -770,6 +820,7 @@ struct Index {
         break;
       case 'webdav':
         this.showWebDav = true;
+        this.refreshWebDavBackups();
         break;
       case 'checkUpdate':
         await this.checkForUpdates(true);
@@ -1353,7 +1404,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.0 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.1 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -1515,7 +1566,7 @@ struct Index {
 
   @Builder
   WebDavDialog() {
-    Column({ space: 12 }) {
+    Column() {
       Row() {
         Text('在线备份 (WebDAV)')
           .fontSize(21)
@@ -1533,6 +1584,8 @@ struct Index {
           })
       }
       .width('100%')
+      Scroll() {
+        Column({ space: 12 }) {
 
       Row({ space: 10 }) {
         Text('服务器')
@@ -1587,7 +1640,7 @@ struct Index {
       }
       .width('100%')
       Row({ space: 10 }) {
-        Text('文件名')
+        Text('备份前缀')
           .width(68)
           .fontSize(14)
           .fontColor(this.palette.textSecondary)
@@ -1636,30 +1689,109 @@ struct Index {
           .onClick(() => {
             this.backupToWebDav();
           })
-        Button('从云端恢复')
+        Button('刷新版本')
           .layoutWeight(1)
           .height(46)
           .backgroundColor(this.palette.surfaceVariant)
           .fontColor(this.palette.textPrimary)
           .borderRadius(23)
-          .enabled(!this.busy)
+          .enabled(!this.loadingWebDavVersions)
           .onClick(() => {
-            this.restoreFromWebDav();
+            this.refreshWebDavBackups();
           })
       }
       .width('100%')
+      Text('云端备份版本')
+        .width('100%')
+        .fontSize(15)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.palette.textPrimary)
+      if (this.loadingWebDavVersions) {
+        Text('正在读取版本列表…')
+          .width('100%')
+          .fontSize(13)
+          .fontColor(this.palette.textSecondary)
+      } else if (this.webDavBackups.length === 0) {
+        Text('暂无备份，请上传一次或点击“刷新版本”。')
+          .width('100%')
+          .fontSize(13)
+          .fontColor(this.palette.textSecondary)
+      } else {
+        List({ space: 6 }) {
+          ForEach(this.webDavBackups, (entry: WebDavBackupEntry) => {
+            ListItem() {
+              Row({ space: 10 }) {
+                Column({ space: 3 }) {
+                  Text(this.webDavVersionLabel(entry))
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(this.palette.textPrimary)
+                  Text(`${entry.stationCount} 个电台 · ${entry.fileName}`)
+                    .fontSize(11)
+                    .fontColor(this.palette.textSecondary)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+                Text(this.selectedWebDavFile === entry.fileName ? '✓' : '')
+                  .width(24)
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(this.primaryColor())
+                  .textAlign(TextAlign.Center)
+              }
+              .width('100%')
+              .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+              .borderRadius(12)
+              .backgroundColor(this.selectedWebDavFile === entry.fileName
+                ? this.palette.nowPlaying
+                : this.palette.surface)
+              .border({
+                width: 1,
+                color: this.selectedWebDavFile === entry.fileName
+                  ? this.primaryColor()
+                  : this.palette.divider
+              })
+              .onClick(() => {
+                this.selectedWebDavFile = entry.fileName;
+              })
+            }
+          }, (entry: WebDavBackupEntry) => entry.fileName)
+        }
+        .width('100%')
+        .height(132)
+        .scrollBar(BarState.Auto)
+      }
+      Button('恢复所选版本')
+        .width('100%')
+        .height(46)
+        .backgroundColor(this.primaryColor())
+        .fontColor(Color.White)
+        .borderRadius(23)
+        .enabled(!this.busy && this.selectedWebDavFile.length > 0)
+        .onClick(() => {
+          this.restoreFromWebDav();
+        })
       if (this.settingsStatus.length > 0) {
         Text(this.settingsStatus)
           .width('100%')
           .fontSize(13)
           .fontColor(this.palette.textSecondary)
       }
-      Text('备份包含电台、台标和顺序；WebDAV 密码不会写入备份。')
+      Text('每次上传都会生成独立时间戳备份。版本包含电台、设置、台标和显式播放顺序；WebDAV 密码不会写入备份。')
         .width('100%')
         .fontSize(12)
         .fontColor(this.palette.textSecondary)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Auto)
     }
     .width('92%')
+    .constraintSize({ maxHeight: '92%' })
     .padding(18)
     .borderRadius(24)
     .backgroundColor(this.palette.background)

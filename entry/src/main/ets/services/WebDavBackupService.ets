@@ -1,8 +1,21 @@
 import { http } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { encodeBasicCredentials } from '../utils/Base64Tools';
+import {
+  backupDirectoryUrl,
+  backupFilePrefix,
+  backupManifestFileName,
+  buildRemoteFileUrl,
+  buildVersionedBackupFileName,
+  mergeWebDavBackupEntries,
+  parseWebDavBackupManifest,
+  serializeWebDavBackupManifest,
+  WEBDAV_MANIFEST_SCHEMA_VERSION,
+  WebDavBackupEntry,
+  WebDavBackupManifest
+} from '../utils/BackupModel';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.0';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.1';
 
 export interface WebDavConfig {
   baseUrl: string;
@@ -18,24 +31,15 @@ interface WebDavHeaders {
   'Overwrite': string;
 }
 
-function normalizeFileName(fileName: string): string {
-  const trimmed = fileName.trim().replaceAll('\\', '/');
-  if (trimmed.length === 0 || trimmed.includes('..') || trimmed.startsWith('/')) {
-    throw new Error('WebDAV 文件名不能为空，不能以 / 开头，也不能包含 ..');
-  }
-  return trimmed;
+interface WebDavTextResponse {
+  code: number;
+  text: string;
 }
 
-export function buildBackupUrl(config: WebDavConfig): string {
-  const base = config.baseUrl.trim().replaceAll('\r', '').replaceAll('\n', '');
-  if (base.length === 0) {
-    throw new Error('请先填写 WebDAV 地址');
-  }
-  if (base.toLowerCase().endsWith('.json')) {
-    return base;
-  }
-  const fileName = normalizeFileName(config.fileName);
-  return `${base.replace(/\/+$/, '')}/${fileName}`;
+interface BackupMetadata {
+  exportedAt?: string;
+  appVersion?: string;
+  stations?: object[];
 }
 
 function buildHeaders(config: WebDavConfig, contentType: string): WebDavHeaders {
@@ -68,11 +72,20 @@ function describeHttpFailure(code: number, prefix: string): Error {
   return new Error(`${prefix}：HTTP ${code}${hint}`);
 }
 
+function manifestUrl(config: WebDavConfig): string {
+  return buildRemoteFileUrl(config.baseUrl, backupManifestFileName(config.fileName));
+}
+
+function legacyFileName(config: WebDavConfig): string {
+  return `${backupFilePrefix(config.fileName)}.json`;
+}
+
 export class WebDavBackupService {
   async testConnection(config: WebDavConfig): Promise<void> {
+    const directory = backupDirectoryUrl(config.baseUrl);
     const request = http.createHttp();
     try {
-      const response = await request.request(config.baseUrl.trim(), {
+      const response = await request.request(directory, {
         method: http.RequestMethod.OPTIONS,
         header: buildHeaders(config, 'application/json'),
         connectTimeout: 20000,
@@ -87,33 +100,111 @@ export class WebDavBackupService {
     }
   }
 
-  async uploadBackup(config: WebDavConfig, json: string): Promise<void> {
+  async uploadBackup(config: WebDavConfig, json: string): Promise<WebDavBackupEntry> {
+    const metadata = JSON.parse(json) as BackupMetadata;
+    const exportedAt = typeof metadata.exportedAt === 'string' && metadata.exportedAt.length > 0
+      ? metadata.exportedAt
+      : new Date().toISOString();
+    const fileName = buildVersionedBackupFileName(config.fileName, new Date(exportedAt));
+    await this.putText(config, buildRemoteFileUrl(config.baseUrl, fileName), json, '云端备份失败');
+
+    const entry: WebDavBackupEntry = {
+      fileName: fileName,
+      exportedAt: exportedAt,
+      stationCount: Array.isArray(metadata.stations) ? metadata.stations.length : 0,
+      appVersion: typeof metadata.appVersion === 'string' ? metadata.appVersion : ''
+    };
+    const manifest = await this.loadManifest(config);
+    const entries = mergeWebDavBackupEntries(manifest.backups, entry);
+    await this.putText(
+      config,
+      manifestUrl(config),
+      serializeWebDavBackupManifest(entries),
+      '云端版本列表更新失败'
+    );
+    return entry;
+  }
+
+  async listBackups(config: WebDavConfig): Promise<WebDavBackupEntry[]> {
+    const manifest = await this.loadManifest(config);
+    if (manifest.backups.length > 0) {
+      return manifest.backups;
+    }
+    const legacy = await this.getText(
+      config,
+      buildRemoteFileUrl(config.baseUrl, legacyFileName(config)),
+      true
+    );
+    if (legacy.code === 200 && legacy.text.length > 0) {
+      const metadata = JSON.parse(legacy.text) as BackupMetadata;
+      return [{
+        fileName: legacyFileName(config),
+        exportedAt: typeof metadata.exportedAt === 'string' ? metadata.exportedAt : '',
+        stationCount: Array.isArray(metadata.stations) ? metadata.stations.length : 0,
+        appVersion: typeof metadata.appVersion === 'string' ? metadata.appVersion : ''
+      }];
+    }
+    return [];
+  }
+
+  async downloadBackup(config: WebDavConfig, fileName: string): Promise<string> {
+    const response = await this.getText(config, buildRemoteFileUrl(config.baseUrl, fileName), false);
+    if (response.code !== 200) {
+      throw describeHttpFailure(response.code, '云端恢复失败');
+    }
+    if (response.text.length === 0) {
+      throw new Error('WebDAV 返回的备份内容为空');
+    }
+    return response.text;
+  }
+
+  private async loadManifest(config: WebDavConfig): Promise<WebDavBackupManifest> {
+    const response = await this.getText(config, manifestUrl(config), true);
+    if (response.code === 404) {
+      return { schemaVersion: WEBDAV_MANIFEST_SCHEMA_VERSION, backups: [] };
+    }
+    if (response.code !== 200) {
+      throw describeHttpFailure(response.code, '读取云端版本列表失败');
+    }
+    return parseWebDavBackupManifest(response.text);
+  }
+
+  private async putText(
+    config: WebDavConfig,
+    url: string,
+    text: string,
+    failurePrefix: string
+  ): Promise<void> {
     const request = http.createHttp();
     try {
-      const response = await request.request(buildBackupUrl(config), {
+      const response = await request.request(url, {
         method: http.RequestMethod.PUT,
         header: buildHeaders(config, 'application/json; charset=utf-8'),
-        extraData: json,
+        extraData: text,
         connectTimeout: 20000,
         readTimeout: 120000,
         maxLimit: 50 * 1024 * 1024,
         expectDataType: http.HttpDataType.STRING
       });
       if (response.responseCode !== 200 && response.responseCode !== 201 && response.responseCode !== 204) {
-        throw describeHttpFailure(response.responseCode, '云端备份失败');
+        throw describeHttpFailure(response.responseCode, failurePrefix);
       }
     } catch (error) {
       const businessError = error as BusinessError;
-      throw new Error(`WebDAV 上传失败：${businessError.message ?? '未知错误'}`);
+      throw new Error(businessError.message ?? `${failurePrefix}：未知错误`);
     } finally {
       request.destroy();
     }
   }
 
-  async downloadBackup(config: WebDavConfig): Promise<string> {
+  private async getText(
+    config: WebDavConfig,
+    url: string,
+    allowNotFound: boolean
+  ): Promise<WebDavTextResponse> {
     const request = http.createHttp();
     try {
-      const response = await request.request(buildBackupUrl(config), {
+      const response = await request.request(url, {
         method: http.RequestMethod.GET,
         header: buildHeaders(config, 'application/json'),
         connectTimeout: 20000,
@@ -121,16 +212,23 @@ export class WebDavBackupService {
         maxLimit: 50 * 1024 * 1024,
         expectDataType: http.HttpDataType.STRING
       });
-      if (response.responseCode !== 200) {
+      if (!allowNotFound && response.responseCode !== 200) {
         throw describeHttpFailure(response.responseCode, '云端恢复失败');
       }
-      if (typeof response.result !== 'string') {
-        throw new Error('WebDAV 返回的备份内容不是文本');
-      }
-      return response.result;
+      return {
+        code: response.responseCode,
+        text: typeof response.result === 'string' ? response.result : ''
+      };
     } catch (error) {
+      if (allowNotFound) {
+        const businessError = error as BusinessError;
+        const message = businessError.message ?? '';
+        if (message.includes('404')) {
+          return { code: 404, text: '' };
+        }
+      }
       const businessError = error as BusinessError;
-      throw new Error(`WebDAV 下载失败：${businessError.message ?? '未知错误'}`);
+      throw new Error(businessError.message ?? 'WebDAV 下载失败：未知错误');
     } finally {
       request.destroy();
     }

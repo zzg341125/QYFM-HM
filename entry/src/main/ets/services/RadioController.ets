@@ -7,6 +7,11 @@ import { AppSettings, createDefaultSettings, Station } from '../models/Station';
 import { BackgroundTaskService } from './BackgroundTaskService';
 import { BluetoothResumeCallbacks, BluetoothResumeManager } from './BluetoothResumeManager';
 import { SilentAudioKeepAlive } from './SilentAudioKeepAlive';
+import {
+  buildLivePlaybackTuning,
+  recoveryDelayMs,
+  shouldResumeAfterForeground
+} from '../utils/PlaybackRecovery';
 
 export interface RadioSnapshot {
   currentStation: Station | undefined;
@@ -45,6 +50,8 @@ export class RadioController {
   private pausedByUser: boolean = true;
   private sleepTimerMinutes: number = 0;
   private sleepTimer: number = -1;
+  private reconnectTimer: number = -1;
+  private reconnectAttempt: number = 0;
   private backgroundTasks: BackgroundTaskService = new BackgroundTaskService();
   private silentKeepAlive: SilentAudioKeepAlive = new SilentAudioKeepAlive();
   private bluetooth: BluetoothResumeManager;
@@ -133,6 +140,8 @@ export class RadioController {
     }
     this.waitingForBluetooth = false;
     this.pausedByUser = false;
+    this.clearReconnect();
+    this.reconnectAttempt = 0;
     this.bluetooth.cancelPending();
     await this.silentKeepAlive.stop();
     this.currentStation = station;
@@ -173,6 +182,7 @@ export class RadioController {
       return;
     }
     const player = this.player;
+    this.clearReconnect();
     if (player === undefined || (player.state !== 'paused' && player.state !== 'prepared')) {
       await this.playStation(this.currentStation);
       return;
@@ -192,6 +202,7 @@ export class RadioController {
   }
 
   async pause(reason: string, manual: boolean): Promise<void> {
+    this.clearReconnect();
     if (manual) {
       this.pausedByUser = true;
       this.bluetooth.cancelPending();
@@ -217,6 +228,8 @@ export class RadioController {
 
   async stop(): Promise<void> {
     this.pausedByUser = true;
+    this.clearReconnect();
+    this.reconnectAttempt = 0;
     this.bluetooth.cancelPending();
     this.bluetooth.setPlaybackActive(false);
     await this.silentKeepAlive.stop();
@@ -239,15 +252,20 @@ export class RadioController {
   }
 
   async resumeIfPausedAfterForeground(): Promise<void> {
-    if (
-      !this.pausedByUser &&
-      !this.waitingForBluetooth &&
-      this.currentStation !== undefined &&
-      this.player !== undefined &&
-      this.player.state === 'paused'
-    ) {
-      await this.resume('返回前台，继续播放');
+    if (this.pausedByUser || this.waitingForBluetooth || this.currentStation === undefined) {
+      return;
     }
+    const player = this.player;
+    const state = player === undefined ? 'idle' : player.state;
+    if (!shouldResumeAfterForeground(state, this.pausedByUser, this.waitingForBluetooth, true)) {
+      return;
+    }
+    if (state === 'paused' || state === 'prepared') {
+      await this.resume('返回前台，继续播放');
+      return;
+    }
+    this.statusText = '返回前台，正在恢复直播';
+    await this.recoverStream();
   }
 
   setSleepTimer(minutes: number): void {
@@ -297,8 +315,7 @@ export class RadioController {
         return;
       }
       this.isPlaying = false;
-      this.statusText = `播放器错误：${error.message}`;
-      this.notify();
+      this.scheduleStreamRecovery(`播放器错误：${error.message}`);
     });
     player.url = url;
   }
@@ -309,16 +326,19 @@ export class RadioController {
         usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
         rendererFlags: 0
       };
+      const tuning = buildLivePlaybackTuning(this.settings.fastStart, this.settings.largeBuffer);
       const strategy: media.PlaybackStrategy = {
-        preferredBufferDuration: this.settings.largeBuffer ? 20 : 3,
-        preferredBufferDurationForPlaying: this.settings.fastStart ? 0.25 : 1,
-        thresholdForAutoQuickPlay: 5
+        preferredBufferDuration: tuning.preferredBufferDuration,
+        preferredBufferDurationForPlaying: tuning.preferredBufferDurationForPlaying,
+        thresholdForAutoQuickPlay: tuning.thresholdForAutoQuickPlay
       };
       player.setPlaybackStrategy(strategy);
       await player.prepare();
     } else if (state === 'prepared') {
       await player.play();
     } else if (state === 'playing') {
+      this.clearReconnect();
+      this.reconnectAttempt = 0;
       this.isPlaying = true;
       this.waitingForBluetooth = false;
       this.statusText = this.currentStation?.name ?? '正在播放';
@@ -333,9 +353,56 @@ export class RadioController {
       this.notify();
     } else if (state === 'completed' || state === 'stopped') {
       this.isPlaying = false;
-      this.statusText = '播放已停止';
+      this.statusText = this.pausedByUser ? '播放已停止' : '直播流已中断，准备自动恢复';
       await this.updateSessionPlaybackState(false);
       this.notify();
+      this.scheduleStreamRecovery('直播流已中断');
+    }
+  }
+
+  private clearReconnect(): void {
+    if (this.reconnectTimer >= 0) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = -1;
+    }
+  }
+
+  private scheduleStreamRecovery(reason: string): void {
+    if (this.pausedByUser || this.waitingForBluetooth || this.currentStation === undefined ||
+      this.reconnectTimer >= 0) {
+      this.notify();
+      return;
+    }
+    const delay = recoveryDelayMs(this.reconnectAttempt);
+    const seconds = Math.round(delay / 1000);
+    this.statusText = `${reason}，${seconds} 秒后自动重连`;
+    this.notify();
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = -1;
+      this.recoverStream().catch((error: BusinessError) => {
+        this.statusText = `自动恢复失败：${error.message ?? '未知错误'}`;
+        this.scheduleStreamRecovery('自动恢复失败');
+      });
+    }, delay);
+  }
+
+  private async recoverStream(): Promise<void> {
+    if (this.pausedByUser || this.waitingForBluetooth || this.currentStation === undefined ||
+      this.context === undefined) {
+      return;
+    }
+    this.reconnectAttempt++;
+    this.isPlaying = false;
+    this.statusText = `正在自动恢复 ${this.currentStation.name}（第 ${this.reconnectAttempt} 次）`;
+    this.notify();
+    try {
+      await this.replacePlayer(this.currentStation.streamUrl);
+      await this.backgroundTasks.start(this.context);
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.statusText = `直播恢复失败：${businessError.message ?? '未知错误'}`;
+      this.notify();
+      this.scheduleStreamRecovery('直播恢复失败');
     }
   }
 

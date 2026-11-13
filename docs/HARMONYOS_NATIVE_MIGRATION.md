@@ -14,7 +14,9 @@
 | 蓝牙策略 | `entry/src/main/ets/services/BluetoothResumeManager.ets` | A2DP 状态、设备身份、120 分钟窗口 |
 | 后台任务 | `entry/src/main/ets/services/BackgroundTaskService.ets` | 音频长时任务 |
 | 静音保持 | `entry/src/main/ets/services/SilentAudioKeepAlive.ets` | 断开等待期间维持音频任务有效 |
-| WebDAV | `entry/src/main/ets/services/WebDavBackupService.ets` | Basic Auth、PUT 上传、GET 恢复 |
+| WebDAV | `entry/src/main/ets/services/WebDavBackupService.ets` | Basic Auth、时间戳多版本上传、版本索引与任意版本恢复 |
+| 备份模型 | `entry/src/main/ets/utils/BackupModel.ts` | 时间戳文件名、版本索引、显式顺序恢复 |
+| 直播恢复 | `entry/src/main/ets/utils/PlaybackRecovery.ts` | HLS 缓冲水位与退避重连策略 |
 | 在线升级 | `entry/src/main/ets/services/AppUpdateService.ets` | `harmony-v*` GitHub Release 与 AppGallery 更新 |
 | 本地文件 | `entry/src/main/ets/services/LocalFileService.ets` | M3U 和 JSON 的选择、读取与保存 |
 | 电台搜索 | `entry/src/main/ets/services/StationSearchService.ets` | 内置电台和 Radio Browser 在线搜索 |
@@ -41,13 +43,13 @@
 
 ## 备份格式
 
-WebDAV 保存 `application/json` 文件，`schemaVersion` 为 `2`：
+WebDAV 保存 `application/json` 文件，备份数据 `schemaVersion` 为 `2`：
 
 ```json
 {
   "schemaVersion": 2,
   "app": "QYFM HarmonyOS",
-  "appVersion": "1.0.0",
+  "appVersion": "1.0.1",
   "exportedAt": "ISO-8601",
   "stationOrder": ["id-2", "id-1"],
   "stations": [
@@ -79,6 +81,21 @@ WebDAV 保存 `application/json` 文件，`schemaVersion` 为 `2`：
 
 用户选择的本地台标会转换为 Base64 data URL，因此不会因设备路径不同而丢失。`stationOrder` 是恢复顺序的唯一来源；缺失或新增的电台会去重后追加，避免恢复时顺序错乱。WebDAV 密码不会写入备份。
 
+每次上传都会生成独立文件，例如：
+
+```text
+qyfm-backup-20261114-010203-004.json
+```
+
+目录中的 `qyfm-backup-versions.json` 是版本索引，记录文件名、导出时间、电台数量和 App 版本。应用读取该索引并按时间倒序展示，用户选择任意版本后从对应 URL 恢复。索引缺失时会尝试读取旧版固定文件名 `qyfm-backup.json`；索引损坏时停止更新并报错，避免覆盖已有版本历史。
+
+## 直播稳定性
+
+- HLS 默认保留 8 秒缓冲；开启“更大缓冲”后提升到 30 秒。
+- 快速起播使用 1 秒起播水位和 4 秒恢复阈值；稳定模式使用 3 秒起播水位和 6 秒恢复阈值。
+- 播放器报错、直播流完成或停止时自动重连，重试间隔依次为 1、2、4、8、16、30 秒，后续保持 30 秒上限。
+- 应用回到前台时，若用户没有手动暂停且直播仍处于中断状态，会立即尝试恢复。
+
 ## 在线升级
 
 - 启动时可自动检查 GitHub 中 `harmony-v*` 标签的最新稳定发布。
@@ -103,6 +120,9 @@ WebDAV 保存 `application/json` 文件，`schemaVersion` 为 `2`：
 10. 调整电台顺序，备份到 WebDAV，删除或打乱本地顺序后恢复，确认顺序与台标一致。
 11. 关闭编辑模式左滑，确认不出现删除按钮；打开编辑模式后确认可以删除。
 12. 在播放页和设置页连续上下滑动，确认无明显掉帧和卡顿。
+13. 连续上传两次，确认云端列表出现两个时间戳版本，并能分别恢复。
+14. 播放 HLS 直播时中断网络，确认按退避间隔自动重连；恢复网络并切回前台后确认继续播放。
+15. 卸载并重新安装 `1.0.1`，确认桌面图标为 Android `v1.0.8` 的红色自适应收音机图标。
 
 ## v1.0.8 兼容说明
 
@@ -118,9 +138,9 @@ WebDAV 保存 `application/json` 文件，`schemaVersion` 为 `2`：
 | 睡眠定时 15/30/45/60 分钟 | 已对应到实现中 |
 | M3U / M3U8 导入、导出与台标 | 已实现 |
 | 本地 JSON 备份/恢复 | 已实现 |
-| WebDAV 备份/恢复、台标与顺序 | 已实现 |
-| 极速起播与更大缓冲 | 已映射到 AVPlayer 播放策略 |
+| WebDAV 多版本备份、云端列表恢复、台标与顺序 | 已实现 |
+| 极速起播、HLS 缓冲、断流自愈与前台续播 | 已实现 |
 | 编辑电台、编辑流地址权限 | 已实现 |
 | 蓝牙设备识别、断开暂停、120 分钟重续播 | 原生 A2DP 实现并完成锁屏真机验证 |
 | 自动/手动更新、GitHub、版本信息 | 已实现 |
-| 安装后的 App 图标 | 与 `v1.0.8` PNG SHA-1 完全一致 |
+| 安装后的 App 图标 | 按 `v1.0.8` 自适应图标背景色与前景矢量生成 |
