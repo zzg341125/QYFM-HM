@@ -49,7 +49,7 @@ WebDAV 保存 `application/json` 文件，备份数据 `schemaVersion` 为 `2`�
 {
   "schemaVersion": 2,
   "app": "QYFM HarmonyOS",
-  "appVersion": "1.0.1",
+  "appVersion": "1.0.2",
   "exportedAt": "ISO-8601",
   "stationOrder": ["id-2", "id-1"],
   "stations": [
@@ -80,6 +80,8 @@ WebDAV 保存 `application/json` 文件，备份数据 `schemaVersion` 为 `2`�
 ```
 
 用户选择的本地台标会转换为 Base64 data URL，因此不会因设备路径不同而丢失。`stationOrder` 是恢复顺序的唯一来源；缺失或新增的电台会去重后追加，避免恢复时顺序错乱。WebDAV 密码不会写入备份。
+
+WebDAV 密码输入框使用普通键盘与明文显示，方便用户校对；密码仍只保存在本机 Preferences 中。
 
 每次上传都会生成独立文件，例如：
 
@@ -122,7 +124,7 @@ qyfm-backup-20261114-010203-004.json
 12. 在播放页和设置页连续上下滑动，确认无明显掉帧和卡顿。
 13. 连续上传两次，确认云端列表出现两个时间戳版本，并能分别恢复。
 14. 播放 HLS 直播时中断网络，确认按退避间隔自动重连；恢复网络并切回前台后确认继续播放。
-15. 卸载并重新安装 `1.0.1`，确认桌面图标为 Android `v1.0.8` 的红色自适应收音机图标。
+15. 卸载并重新安装 `1.0.2`，确认桌面图标为 Android `v1.0.8` 的红色自适应收音机图标。
 
 ## v1.0.8 兼容说明
 

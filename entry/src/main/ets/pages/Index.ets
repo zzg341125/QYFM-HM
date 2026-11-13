@@ -11,6 +11,7 @@ import { StationRepository } from '../data/StationRepository';
 import { RadioController, RadioSnapshot, RadioStateListener } from '../services/RadioController';
 import { WebDavBackupService, WebDavConfig } from '../services/WebDavBackupService';
 import { WebDavBackupEntry } from '../utils/BackupModel';
+import { isSearchStationAdded, shouldShowSearchResults } from '../utils/SearchModel';
 import { AppUpdateService, NativeUpdateInfo } from '../services/AppUpdateService';
 import { StationIconPicker } from '../services/StationIconPicker';
 import { LocalFileService } from '../services/LocalFileService';
@@ -594,7 +595,11 @@ struct Index {
   }
 
   private async searchStations(): Promise<void> {
-    if (this.searching || this.searchQuery.trim().length === 0) {
+    if (this.searchQuery.trim().length === 0) {
+      this.searchResults = [];
+      return;
+    }
+    if (this.searching) {
       return;
     }
     this.searching = true;
@@ -608,13 +613,25 @@ struct Index {
   }
 
   private async addSearchStation(station: Station): Promise<void> {
-    if (this.stations.some((item: Station) => item.id === station.id || item.streamUrl === station.streamUrl)) {
+    if (isSearchStationAdded(this.stations, station)) {
       this.settingsStatus = '该电台已在播放列表中';
       return;
     }
     this.stations = [station].concat(this.stations);
     await this.repository.saveStations(this.stations);
     this.settingsStatus = `已添加：${station.name}`;
+  }
+
+  private updateSearchQuery(value: string): void {
+    this.searchQuery = value;
+    this.searchResults = [];
+    if (value.trim().length === 0) {
+      this.settingsStatus = '';
+    }
+  }
+
+  private isStationSaved(station: Station): boolean {
+    return isSearchStationAdded(this.stations, station);
   }
 
   private async importM3uFile(): Promise<void> {
@@ -1294,7 +1311,7 @@ struct Index {
                 .backgroundColor(this.palette.surfaceVariant)
                 .borderRadius(22)
                 .onChange((value: string) => {
-                  this.searchQuery = value;
+                  this.updateSearchQuery(value);
                 })
                 .onSubmit(() => {
                   this.searchStations();
@@ -1310,7 +1327,7 @@ struct Index {
                 })
             }
             .width('100%')
-            if (this.searchResults.length > 0) {
+            if (shouldShowSearchResults(this.searchQuery, this.searchResults.length)) {
               Column({ space: 2 }) {
                 ForEach(this.searchResults.slice(0, 8), (station: Station) => {
                   Row({ space: 8 }) {
@@ -1320,11 +1337,15 @@ struct Index {
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
                       .layoutWeight(1)
-                    Text('添加')
+                    Text(this.isStationSaved(station) ? '已添加' : '添加')
                       .fontSize(14)
-                      .fontColor(this.primaryColor())
+                      .fontColor(this.isStationSaved(station)
+                        ? this.palette.textSecondary
+                        : this.primaryColor())
                       .onClick(() => {
-                        this.addSearchStation(station);
+                        if (!this.isStationSaved(station)) {
+                          this.addSearchStation(station);
+                        }
                       })
                   }
                   .width('100%')
@@ -1404,7 +1425,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.1 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.2 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -1627,7 +1648,7 @@ struct Index {
           .fontSize(14)
           .fontColor(this.palette.textSecondary)
         TextInput({ text: this.settings.webdavPassword })
-          .type(InputType.Password)
+          .type(InputType.Normal)
           .layoutWeight(1)
           .height(44)
           .fontSize(14)
