@@ -5,8 +5,10 @@ import {
   backupDirectoryUrl,
   backupFilePrefix,
   backupManifestFileName,
+  buildRemoteBackupFileUrl,
   buildRemoteFileUrl,
   buildVersionedBackupFileName,
+  isZipBackupFileName,
   mergeWebDavBackupEntries,
   parseWebDavBackupManifest,
   serializeWebDavBackupManifest,
@@ -15,7 +17,7 @@ import {
   WebDavBackupManifest
 } from '../utils/BackupModel';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.3';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.4';
 
 export interface WebDavConfig {
   baseUrl: string;
@@ -156,6 +158,56 @@ export class WebDavBackupService {
       throw new Error('WebDAV 返回的备份内容为空');
     }
     return response.text;
+  }
+
+  async fileExists(config: WebDavConfig, fileName: string): Promise<boolean> {
+    if (!isZipBackupFileName(fileName)) {
+      return false;
+    }
+    const request = http.createHttp();
+    try {
+      const response = await request.request(buildRemoteBackupFileUrl(config.baseUrl, fileName), {
+        method: http.RequestMethod.HEAD,
+        header: buildHeaders(config, 'application/zip'),
+        connectTimeout: 20000,
+        readTimeout: 30000,
+        expectDataType: http.HttpDataType.STRING
+      });
+      return response.responseCode === 200 || response.responseCode === 204;
+    } catch (error) {
+      return false;
+    } finally {
+      request.destroy();
+    }
+  }
+
+  async downloadBackupBytes(config: WebDavConfig, fileName: string): Promise<ArrayBuffer> {
+    if (!isZipBackupFileName(fileName)) {
+      throw new Error('WebDAV ZIP 备份文件名无效');
+    }
+    const request = http.createHttp();
+    try {
+      const response = await request.request(buildRemoteBackupFileUrl(config.baseUrl, fileName), {
+        method: http.RequestMethod.GET,
+        header: buildHeaders(config, 'application/zip'),
+        connectTimeout: 20000,
+        readTimeout: 120000,
+        maxLimit: 100 * 1024 * 1024,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER
+      });
+      if (response.responseCode !== 200) {
+        throw describeHttpFailure(response.responseCode, '云端 ZIP 恢复失败');
+      }
+      if (!(response.result instanceof ArrayBuffer)) {
+        throw new Error('WebDAV 返回的 ZIP 内容无效');
+      }
+      return response.result;
+    } catch (error) {
+      const businessError = error as BusinessError;
+      throw new Error(businessError.message ?? 'WebDAV ZIP 下载失败');
+    } finally {
+      request.destroy();
+    }
   }
 
   private async loadManifest(config: WebDavConfig): Promise<WebDavBackupManifest> {

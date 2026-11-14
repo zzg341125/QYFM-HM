@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   backupDirectoryUrl,
+  buildRemoteBackupFileUrl,
   buildVersionedBackupFileName,
   buildRemoteFileUrl,
+  isZipBackupFileName,
   mergeWebDavBackupEntries,
   orderStationsByBackup,
   parseWebDavBackupManifest
@@ -26,6 +28,25 @@ test('turns a legacy JSON URL into its containing WebDAV directory', () => {
   assert.equal(
     buildRemoteFileUrl('https://dav.example.com/radio/', '备份 file.json'),
     'https://dav.example.com/radio/%E5%A4%87%E4%BB%BD%20file.json'
+  );
+});
+
+test('resolves Android v1.0.8 ZIP files in a WebDAV directory or a full ZIP URL', () => {
+  assert.equal(isZipBackupFileName('quyang_backup_20261112_102536.zip'), true);
+  assert.equal(isZipBackupFileName('qyfm-backup.json'), false);
+  assert.equal(
+    buildRemoteBackupFileUrl(
+      'https://dav.example.com/radio/',
+      'quyang_backup_20261112_102536.zip'
+    ),
+    'https://dav.example.com/radio/quyang_backup_20261112_102536.zip'
+  );
+  assert.equal(
+    buildRemoteBackupFileUrl(
+      'https://dav.example.com/radio/quyang_backup_20261112_102536.zip',
+      'ignored.zip'
+    ),
+    'https://dav.example.com/radio/quyang_backup_20261112_102536.zip'
   );
 });
 

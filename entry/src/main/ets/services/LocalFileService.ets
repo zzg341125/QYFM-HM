@@ -126,6 +126,37 @@ export class LocalFileService {
     }
   }
 
+  async extractAndroidBackupZipBytes(
+    context: common.UIAbilityContext,
+    data: ArrayBuffer
+  ): Promise<AndroidBackupArchiveFiles> {
+    if (data.byteLength <= 0 || data.byteLength > MAX_BACKUP_BYTES) {
+      throw new Error('云端 ZIP 备份为空或超过 100 MB');
+    }
+    const stamp = Date.now().toString();
+    const zipPath = `${context.cacheDir}/qyfm-cloud-backup-${stamp}.zip`;
+    const outputDir = `${context.cacheDir}/qyfm-cloud-backup-${stamp}`;
+    const file = fileIo.openSync(
+      zipPath,
+      fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+    );
+    try {
+      fileIo.writeSync(file.fd, data);
+    } finally {
+      fileIo.closeSync(file);
+    }
+    try {
+      await zlib.decompressFile(zipPath, outputDir);
+      return this.readExtractedBackup(outputDir);
+    } finally {
+      try {
+        fileIo.unlinkSync(zipPath);
+      } catch (error) {
+        console.error('清理云端临时备份压缩包失败');
+      }
+    }
+  }
+
   private async readAndroidBackupZip(
     context: common.UIAbilityContext,
     uri: string
@@ -136,13 +167,7 @@ export class LocalFileService {
     fileIo.copyFileSync(uri, zipPath);
     try {
       await zlib.decompressFile(zipPath, outputDir);
-      return {
-        manifestText: this.readOptionalText(`${outputDir}/manifest.json`),
-        playlistText: this.readOptionalText(`${outputDir}/playlist.json`),
-        playlistM3uText: this.readOptionalText(`${outputDir}/playlist.m3u`),
-        settingsText: this.readOptionalText(`${outputDir}/settings.json`),
-        logos: this.readBackupLogos(`${outputDir}/logos`)
-      };
+      return this.readExtractedBackup(outputDir);
     } finally {
       try {
         fileIo.unlinkSync(zipPath);
@@ -150,6 +175,16 @@ export class LocalFileService {
         console.error('清理临时备份压缩包失败');
       }
     }
+  }
+
+  private readExtractedBackup(outputDir: string): AndroidBackupArchiveFiles {
+    return {
+      manifestText: this.readOptionalText(`${outputDir}/manifest.json`),
+      playlistText: this.readOptionalText(`${outputDir}/playlist.json`),
+      playlistM3uText: this.readOptionalText(`${outputDir}/playlist.m3u`),
+      settingsText: this.readOptionalText(`${outputDir}/settings.json`),
+      logos: this.readBackupLogos(`${outputDir}/logos`)
+    };
   }
 
   private readOptionalText(path: string): string {

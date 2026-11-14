@@ -10,11 +10,11 @@ import {
 import { StationRepository } from '../data/StationRepository';
 import { RadioController, RadioSnapshot, RadioStateListener } from '../services/RadioController';
 import { WebDavBackupService, WebDavConfig } from '../services/WebDavBackupService';
-import { orderStationsByBackup, WebDavBackupEntry } from '../utils/BackupModel';
+import { isZipBackupFileName, orderStationsByBackup, WebDavBackupEntry } from '../utils/BackupModel';
 import { isSearchStationAdded, shouldShowSearchResults } from '../utils/SearchModel';
 import { AppUpdateService, NativeUpdateInfo } from '../services/AppUpdateService';
 import { StationIconPicker } from '../services/StationIconPicker';
-import { LocalFileService } from '../services/LocalFileService';
+import { AndroidBackupArchiveFiles, LocalFileService } from '../services/LocalFileService';
 import { AndroidBackupSettingsPatch, parseAndroidV108Backup } from '../utils/AndroidBackupModel';
 import { M3uPlaylistService, M3uEntry } from '../services/M3uPlaylistService';
 import { StationSearchService } from '../services/StationSearchService';
@@ -63,6 +63,7 @@ struct Index {
   @State webDavBackups: WebDavBackupEntry[] = [];
   @State selectedWebDavFile: string = '';
   @State loadingWebDavVersions: boolean = false;
+  @State webDavZipFile: string = 'quyang_backup_20261112_102536.zip';
 
   private repository: StationRepository = new StationRepository();
   private radio: RadioController = RadioController.getInstance();
@@ -353,6 +354,23 @@ struct Index {
     this.busy = true;
     this.settingsStatus = `正在恢复 ${this.selectedWebDavFile}…`;
     try {
+      if (isZipBackupFileName(this.selectedWebDavFile)) {
+        if (this.abilityContext === undefined) {
+          throw new Error('应用上下文尚未初始化');
+        }
+        const data = await this.webDav.downloadBackupBytes(
+          this.webDavConfig(),
+          this.selectedWebDavFile
+        );
+        const archive = await this.localFiles.extractAndroidBackupZipBytes(
+          this.abilityContext,
+          data
+        );
+        await this.applyAndroidBackupArchive(archive);
+        this.settingsStatus =
+          `已从云端 ZIP 恢复 ${this.stations.length} 个电台、台标和原顺序`;
+        return;
+      }
       const json = await this.webDav.downloadBackup(this.webDavConfig(), this.selectedWebDavFile);
       const result = this.repository.parseBackup(json);
       this.stations = result.stations;
@@ -380,6 +398,17 @@ struct Index {
     this.settingsStatus = '正在读取云端备份版本…';
     try {
       this.webDavBackups = await this.webDav.listBackups(this.webDavConfig());
+      const zipName = this.webDavZipFile.trim();
+      if (isZipBackupFileName(zipName) &&
+        await this.webDav.fileExists(this.webDavConfig(), zipName)) {
+        const zipEntry: WebDavBackupEntry = {
+          fileName: zipName,
+          exportedAt: '',
+          stationCount: 0,
+          appVersion: 'Android v1.0.8 ZIP'
+        };
+        this.webDavBackups = [zipEntry].concat(this.webDavBackups);
+      }
       if (!this.webDavBackups.some((entry: WebDavBackupEntry) =>
         entry.fileName === this.selectedWebDavFile)) {
         this.selectedWebDavFile = this.webDavBackups.length > 0 ? this.webDavBackups[0].fileName : '';
@@ -410,6 +439,13 @@ struct Index {
     const minute = date.getMinutes().toString().padStart(2, '0');
     const second = date.getSeconds().toString().padStart(2, '0');
     return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  }
+
+  private webDavEntryDetail(entry: WebDavBackupEntry): string {
+    if (isZipBackupFileName(entry.fileName)) {
+      return `Android v1.0.8 ZIP · ${entry.fileName}`;
+    }
+    return `${entry.stationCount} 个电台 · ${entry.fileName}`;
   }
 
   private async checkForUpdates(manual: boolean): Promise<void> {
@@ -732,50 +768,59 @@ struct Index {
         if (picked.archive === undefined) {
           throw new Error('无法读取 Android 备份压缩包');
         }
-        const archive = picked.archive;
-        const restored = parseAndroidV108Backup(
-          archive.manifestText,
-          archive.playlistText,
-          archive.playlistM3uText,
-          archive.settingsText,
-          archive.logos
-        );
-        const ordered = orderStationsByBackup(restored.stations, restored.stationOrder);
-        this.stations = ordered.map((station): Station => {
-          return {
-            id: station.id,
-            name: station.name,
-            streamUrl: station.streamUrl,
-            iconUrl: station.iconUrl,
-            tags: station.tags,
-            country: station.country,
-            state: station.state,
-            favorite: station.favorite
-          };
-        });
-        const settings = copySettings(this.settings);
-        settings.webdavPassword = this.settings.webdavPassword;
-        this.applyAndroidBackupSettings(settings, restored.settings);
-        this.settings = settings;
-      } else {
-        const result = this.repository.parseBackup(picked.text);
-        this.stations = result.stations;
-        result.settings.webdavPassword = this.settings.webdavPassword;
-        this.settings = result.settings;
+        await this.applyAndroidBackupArchive(picked.archive);
+        this.settingsStatus =
+          `已从 Android ZIP 恢复 ${this.stations.length} 个电台、台标和原顺序`;
+        return;
       }
+      const result = this.repository.parseBackup(picked.text);
+      this.stations = result.stations;
+      result.settings.webdavPassword = this.settings.webdavPassword;
+      this.settings = result.settings;
       this.palette = findTheme(this.settings.themeId);
       this.currentStation = this.stations.length > 0 ? this.stations[0] : undefined;
       await this.repository.saveStations(this.stations);
       await this.repository.saveSettings(this.settings);
       await this.radio.stop();
       await this.radio.applySettings(this.settings);
-      this.settingsStatus = picked.isZip
-        ? `已从 Android ZIP 恢复 ${this.stations.length} 个电台、台标和原顺序`
-        : `已恢复 ${this.stations.length} 个电台`;
+      this.settingsStatus = `已恢复 ${this.stations.length} 个电台`;
     } catch (error) {
       const businessError = error as BusinessError;
       this.settingsStatus = businessError.message;
     }
+  }
+
+  private async applyAndroidBackupArchive(archive: AndroidBackupArchiveFiles): Promise<void> {
+    const restored = parseAndroidV108Backup(
+      archive.manifestText,
+      archive.playlistText,
+      archive.playlistM3uText,
+      archive.settingsText,
+      archive.logos
+    );
+    const ordered = orderStationsByBackup(restored.stations, restored.stationOrder);
+    this.stations = ordered.map((station): Station => {
+      return {
+        id: station.id,
+        name: station.name,
+        streamUrl: station.streamUrl,
+        iconUrl: station.iconUrl,
+        tags: station.tags,
+        country: station.country,
+        state: station.state,
+        favorite: station.favorite
+      };
+    });
+    const settings = copySettings(this.settings);
+    settings.webdavPassword = this.settings.webdavPassword;
+    this.applyAndroidBackupSettings(settings, restored.settings);
+    this.settings = settings;
+    this.palette = findTheme(this.settings.themeId);
+    this.currentStation = this.stations.length > 0 ? this.stations[0] : undefined;
+    await this.repository.saveStations(this.stations);
+    await this.repository.saveSettings(this.settings);
+    await this.radio.stop();
+    await this.radio.applySettings(this.settings);
   }
 
   private applyAndroidBackupSettings(settings: AppSettings, patch: AndroidBackupSettingsPatch): void {
@@ -1548,7 +1593,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.3 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.4 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -1862,6 +1907,26 @@ struct Index {
           })
       }
       .width('100%')
+      Row({ space: 10 }) {
+        Text('ZIP 文件')
+          .width(68)
+          .fontSize(14)
+          .fontColor(this.palette.textSecondary)
+        TextInput({
+          text: this.webDavZipFile,
+          placeholder: 'quyang_backup_20261112_102536.zip'
+        })
+          .layoutWeight(1)
+          .height(44)
+          .fontSize(14)
+          .backgroundColor(this.palette.surface)
+          .borderRadius(12)
+          .border({ width: 1, color: this.palette.divider })
+          .onChange((value: string) => {
+            this.webDavZipFile = value;
+          })
+      }
+      .width('100%')
       Row({ space: 8 }) {
         Button('保存')
           .layoutWeight(1)
@@ -1932,7 +1997,7 @@ struct Index {
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor(this.palette.textPrimary)
-                  Text(`${entry.stationCount} 个电台 · ${entry.fileName}`)
+                  Text(this.webDavEntryDetail(entry))
                     .fontSize(11)
                     .fontColor(this.palette.textSecondary)
                     .maxLines(1)

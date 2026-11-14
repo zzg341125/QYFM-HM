@@ -38,6 +38,25 @@ export function buildRemoteFileUrl(directoryUrl: string, fileName: string): stri
   return `${directory.replace(/\/+$/, '')}/${encodeURIComponent(fileName)}`;
 }
 
+export function isZipBackupFileName(fileName: string): boolean {
+  const normalized = fileName.trim().replaceAll('\\', '/');
+  return normalized.toLowerCase().endsWith('.zip') &&
+    !normalized.startsWith('/') &&
+    !normalized.includes('..') &&
+    !normalized.includes('/');
+}
+
+export function buildRemoteBackupFileUrl(baseUrl: string, fileName: string): string {
+  const normalized = baseUrl.trim().replaceAll('\r', '').replaceAll('\n', '');
+  if (normalized.toLowerCase().endsWith('.zip')) {
+    return normalized;
+  }
+  if (!isZipBackupFileName(fileName)) {
+    throw new Error('WebDAV ZIP 文件名必须以 .zip 结尾');
+  }
+  return buildRemoteFileUrl(normalized, fileName.trim());
+}
+
 export function backupFilePrefix(configuredFileName: string): string {
   const normalized = configuredFileName.trim().replaceAll('\\', '/');
   if (normalized.length === 0 || normalized.startsWith('/') || normalized.includes('..') ||
