@@ -2,6 +2,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { encodeImageData } from '../utils/Base64Tools';
+import { detectImageMimeType } from '../utils/MediaAssets';
 
 const MAX_ICON_BYTES: number = 2 * 1024 * 1024;
 
@@ -27,15 +28,7 @@ export class StationIconPicker {
       if (readLength !== stat.size) {
         throw new Error('台标图片读取不完整');
       }
-      const lowerUri = uri.toLowerCase();
-      let mimeType = 'image/jpeg';
-      if (lowerUri.endsWith('.png')) {
-        mimeType = 'image/png';
-      } else if (lowerUri.endsWith('.webp')) {
-        mimeType = 'image/webp';
-      } else if (lowerUri.endsWith('.gif')) {
-        mimeType = 'image/gif';
-      }
+      const mimeType = detectImageMimeType(new Uint8Array(buffer), uri);
       return encodeImageData(buffer, mimeType);
     } catch (error) {
       const businessError = error as BusinessError;

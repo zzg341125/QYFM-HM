@@ -12,11 +12,11 @@ export function recoveryDelayMs(attempt: number): number {
 }
 
 export function buildLivePlaybackTuning(fastStart: boolean, largeBuffer: boolean): LivePlaybackTuning {
-  const startWaterline = fastStart ? 1 : 3;
+  const startWaterline = fastStart ? 3 : 5;
   return {
-    preferredBufferDuration: largeBuffer ? 30 : 8,
+    preferredBufferDuration: largeBuffer ? 45 : 20,
     preferredBufferDurationForPlaying: startWaterline,
-    thresholdForAutoQuickPlay: startWaterline + 3
+    thresholdForAutoQuickPlay: startWaterline + 4
   };
 }
 

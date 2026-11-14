@@ -20,6 +20,7 @@ import { M3uPlaylistService, M3uEntry } from '../services/M3uPlaylistService';
 import { StationSearchService } from '../services/StationSearchService';
 import { findTheme, THEME_PRESETS, ThemePreset } from '../models/ThemePreset';
 import { formatSleepTimerEnd, normalizeResumeWindowMinutes } from '../utils/TimeSettings';
+import { moveListItem } from '../utils/ListOrdering';
 
 const COLOR_DANGER_BG: string = '#E9B7B3';
 const COLOR_DANGER: string = '#B3261E';
@@ -242,14 +243,12 @@ struct Index {
   }
 
   private moveStationByIndex(from: number, to: number): void {
-    if (!this.settings.editMode || from === to || from < 0 || to < 0 || from >= this.stations.length ||
+    if (from === to || from < 0 || to < 0 || from >= this.stations.length ||
       to >= this.stations.length) {
       return;
     }
-    const next = this.stations.slice();
-    const removed = next.splice(from, 1);
-    next.splice(to, 0, removed[0]);
-    this.stations = next;
+    this.closeStationSwipe();
+    this.stations = moveListItem(this.stations, from, to);
     this.repository.saveStations(this.stations).then(() => {
       this.playbackStatus = '电台顺序已保存';
     });
@@ -1118,6 +1117,21 @@ struct Index {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
 
+      if (this.settings.editMode) {
+        Text('✎')
+          .width(40)
+          .height(40)
+          .textAlign(TextAlign.Center)
+          .fontSize(20)
+          .fontColor(this.palette.textPrimary)
+          .borderRadius(20)
+          .hitTestBehavior(HitTestMode.Block)
+          .onClick(() => {
+            this.closeStationSwipe();
+            this.openStationEditor(station);
+          })
+      }
+
       Text(this.currentStation?.id === station.id && this.isPlaying ? '■' : '▶')
         .width(44)
         .height(44)
@@ -1346,18 +1360,18 @@ struct Index {
           .onClick(() => {
             this.activateStation(station);
           })
-          .parallelGesture(
-            LongPressGesture()
-              .onAction(() => {
-                if (this.settings.editMode) {
-                  this.closeStationSwipe();
-                  this.openStationEditor(station);
-                }
-              })
-          )
         }, (station: Station) => station.id)
           .onMove((from: number, to: number) => {
             this.moveStationByIndex(from, to);
+          }, {
+            onLongPress: (index: number) => {
+              const pressed = this.stations[index];
+              if (pressed !== undefined && this.isPlaying &&
+                this.currentStation?.id === pressed.id) {
+                this.closeStationSwipe();
+                this.showSleepPanel = true;
+              }
+            }
           })
 
         ListItem() {
@@ -1649,7 +1663,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.7 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.8 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

@@ -15,14 +15,14 @@ test('backs off repeated live stream reconnects without retrying forever at one 
 
 test('uses a stable HLS restart waterline and a larger restart threshold', () => {
   assert.deepEqual(buildLivePlaybackTuning(true, false), {
-    preferredBufferDuration: 8,
-    preferredBufferDurationForPlaying: 1,
-    thresholdForAutoQuickPlay: 4
+    preferredBufferDuration: 20,
+    preferredBufferDurationForPlaying: 3,
+    thresholdForAutoQuickPlay: 7
   });
   assert.deepEqual(buildLivePlaybackTuning(false, true), {
-    preferredBufferDuration: 30,
-    preferredBufferDurationForPlaying: 3,
-    thresholdForAutoQuickPlay: 6
+    preferredBufferDuration: 45,
+    preferredBufferDurationForPlaying: 5,
+    thresholdForAutoQuickPlay: 9
   });
 });
 
