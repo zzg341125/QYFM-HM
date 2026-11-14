@@ -525,7 +525,40 @@ struct Index {
       this.updateStatus = '已打开系统安装器，请在手机页面确认安装';
     } catch (error) {
       const businessError = error as BusinessError;
-      this.updateStatus = `无法打开系统安装器：${businessError.message ?? '未知错误'}`;
+      this.updateStatus =
+        `系统未开放直接安装入口：${businessError.message ?? '未知错误'}。请保存安装包后手动打开。`;
+      await this.saveUpdateForManualInstall();
+    }
+  }
+
+  private async saveUpdateForManualInstall(): Promise<void> {
+    if (this.abilityContext === undefined || this.updateDownloadPath.length === 0 ||
+      this.updateInfo === undefined) {
+      return;
+    }
+    const separator = Math.max(
+      this.updateDownloadPath.lastIndexOf('/'),
+      this.updateDownloadPath.lastIndexOf('\\')
+    );
+    const fileName = separator >= 0
+      ? this.updateDownloadPath.substring(separator + 1)
+      : this.updateInfo.assetName;
+    try {
+      const savedUri = await this.localFiles.saveFileFromPath(
+        this.abilityContext,
+        fileName,
+        this.updateDownloadPath
+      );
+      if (savedUri.length === 0) {
+        this.updateStatus = '已取消保存安装包';
+        return;
+      }
+      await this.updateService.openFileManager(this.abilityContext, savedUri);
+      this.updateStatus = '已保存安装包并打开文件管理器，请点击安装包并在系统中确认';
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.updateStatus =
+        `安装包已下载，但无法自动打开文件管理器：${businessError.message ?? '未知错误'}`;
     }
   }
 
@@ -1663,7 +1696,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.8 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.9 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

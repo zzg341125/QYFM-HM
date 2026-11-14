@@ -28,14 +28,37 @@ export function isNewerVersion(remote: string, current: string): boolean {
   return false;
 }
 
-export function selectHapAsset(assets: UpdateAsset[]): UpdateAsset | undefined {
-  const hapAssets = assets.filter((asset: UpdateAsset) =>
-    asset.name.toLowerCase().endsWith('.hap') &&
+export function selectInstallAsset(assets: UpdateAsset[]): UpdateAsset | undefined {
+  const installAssets = assets.filter((asset: UpdateAsset) =>
+    (asset.name.toLowerCase().endsWith('.app') || asset.name.toLowerCase().endsWith('.hap')) &&
     asset.browser_download_url.toLowerCase().startsWith('https://') &&
     !asset.name.toLowerCase().includes('unsigned'));
-  const signed = hapAssets.find((asset: UpdateAsset) =>
-    asset.name.toLowerCase().includes('signed'));
-  return signed ?? (hapAssets.length > 0 ? hapAssets[0] : undefined);
+  const appAssets = installAssets.filter((asset: UpdateAsset) => asset.name.toLowerCase().endsWith('.app'));
+  const hapAssets = installAssets.filter((asset: UpdateAsset) => asset.name.toLowerCase().endsWith('.hap'));
+  const signedApp = appAssets.find((asset: UpdateAsset) => asset.name.toLowerCase().includes('signed'));
+  if (signedApp !== undefined) {
+    return signedApp;
+  }
+  if (appAssets.length > 0) {
+    return appAssets[0];
+  }
+  const signedHap = hapAssets.find((asset: UpdateAsset) => asset.name.toLowerCase().includes('signed'));
+  return signedHap ?? (hapAssets.length > 0 ? hapAssets[0] : undefined);
+}
+
+export function selectHapAsset(assets: UpdateAsset[]): UpdateAsset | undefined {
+  return selectInstallAsset(assets);
+}
+
+export function installUtdForFileName(fileName: string): string {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.app')) {
+    return 'openharmony.package';
+  }
+  if (lower.endsWith('.hap')) {
+    return 'openharmony.hap';
+  }
+  return '';
 }
 
 export function buildUpdateFileName(tag: string, assetName: string): string {
@@ -45,7 +68,7 @@ export function buildUpdateFileName(tag: string, assetName: string): string {
     .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-  if (safeName.toLowerCase().endsWith('.hap')) {
+  if (safeName.toLowerCase().endsWith('.hap') || safeName.toLowerCase().endsWith('.app')) {
     return safeName;
   }
   const safeTag = tag.replace(/[^A-Za-z0-9._-]+/g, '-');

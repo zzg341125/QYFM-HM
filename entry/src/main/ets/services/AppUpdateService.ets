@@ -5,14 +5,15 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 import {
   buildUpdateFileName,
+  installUtdForFileName,
   isNewerVersion,
-  selectHapAsset,
+  selectInstallAsset,
   UpdateAsset
 } from '../utils/UpdateModel';
 
 const GITHUB_RELEASES_URL: string =
   'https://api.github.com/repos/zzg341125/QYFM-HM/releases?per_page=30';
-const CURRENT_VERSION: string = '1.0.8';
+const CURRENT_VERSION: string = '1.0.9';
 
 export interface NativeUpdateInfo {
   version: string;
@@ -60,7 +61,7 @@ export class AppUpdateService {
           continue;
         }
         if (isNewerVersion(release.tag_name, CURRENT_VERSION)) {
-          const asset = selectHapAsset(release.assets ?? []);
+          const asset = selectInstallAsset(release.assets ?? []);
           return {
             version: release.tag_name,
             title: release.name.length > 0 ? release.name : release.tag_name,
@@ -140,13 +141,31 @@ export class AppUpdateService {
 
   async installHap(context: common.UIAbilityContext, path: string): Promise<void> {
     const uri = fileUri.getUriFromPath(path);
+    const utd = installUtdForFileName(path);
+    if (utd.length === 0) {
+      throw new Error('不支持的安装包类型');
+    }
     const want: Want = {
       action: 'ohos.want.action.viewData',
       uri: uri,
-      type: 'openharmony.hap',
+      type: utd,
       flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION,
       parameters: {
         'ability.params.stream': [uri]
+      }
+    };
+    await context.startAbility(want);
+  }
+
+  async openFileManager(context: common.UIAbilityContext, fileUriValue: string): Promise<void> {
+    const want: Want = {
+      bundleName: 'com.ohos.filemanager',
+      abilityName: 'MainAbility',
+      action: 'ohos.want.action.viewData',
+      uri: 'filemanager://openDirectory',
+      flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION,
+      parameters: {
+        fileUri: fileUriValue
       }
     };
     await context.startAbility(want);

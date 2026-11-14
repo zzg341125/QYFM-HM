@@ -111,6 +111,22 @@ export class LocalFileService {
     }
   }
 
+  async saveFileFromPath(
+    context: common.UIAbilityContext,
+    fileName: string,
+    sourcePath: string
+  ): Promise<string> {
+    const options = new picker.DocumentSaveOptions();
+    options.newFileNames = [fileName];
+    const documentPicker = new picker.DocumentViewPicker(context);
+    const uris = await documentPicker.save(options);
+    if (uris.length === 0) {
+      return '';
+    }
+    fileIo.copyFileSync(sourcePath, uris[0]);
+    return uris[0];
+  }
+
   private isZipFile(uri: string): boolean {
     const file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
     try {

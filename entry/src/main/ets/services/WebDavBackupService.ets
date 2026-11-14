@@ -17,7 +17,7 @@ import {
   WebDavBackupManifest
 } from '../utils/BackupModel';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.8';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.9';
 
 export interface WebDavConfig {
   baseUrl: string;
