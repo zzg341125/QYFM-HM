@@ -162,6 +162,7 @@ export class LocalFileService {
       fileIo.closeSync(file);
     }
     try {
+      fileIo.mkdirSync(outputDir, true);
       await zlib.decompressFile(zipPath, outputDir);
       return this.readExtractedBackup(outputDir);
     } finally {
@@ -182,6 +183,7 @@ export class LocalFileService {
     const outputDir = `${context.cacheDir}/qyfm-android-backup-${stamp}`;
     fileIo.copyFileSync(uri, zipPath);
     try {
+      fileIo.mkdirSync(outputDir, true);
       await zlib.decompressFile(zipPath, outputDir);
       return this.readExtractedBackup(outputDir);
     } finally {
