@@ -1,6 +1,7 @@
 import { a2dp, baseProfile, constant } from '@kit.ConnectivityKit';
 import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { normalizeResumeWindowMinutes } from '../utils/TimeSettings';
 
 export interface BluetoothResumeCallbacks {
   onBluetoothLost: (deviceId: string) => void;
@@ -25,6 +26,7 @@ export class BluetoothResumeManager {
   private lostHandled: boolean = false;
   private started: boolean = false;
   private expiryTimer: number = -1;
+  private resumeWindowMinutes: number = 120;
 
   private readonly profileListener = (event: baseProfile.StateChangeParam): void => {
     this.handleProfileState(event);
@@ -97,6 +99,10 @@ export class BluetoothResumeManager {
     }
   }
 
+  setResumeWindowMinutes(minutes: number): void {
+    this.resumeWindowMinutes = normalizeResumeWindowMinutes(minutes);
+  }
+
   cancelPending(): void {
     this.pending = undefined;
     this.lostHandled = false;
@@ -128,7 +134,7 @@ export class BluetoothResumeManager {
       return;
     }
     if (Date.now() > this.pending.deadline) {
-      this.callbacks.onDiagnostics('同一蓝牙设备已超过 120 分钟续播窗口');
+      this.callbacks.onDiagnostics(`同一蓝牙设备已超过 ${this.resumeWindowMinutes} 分钟续播窗口`);
       this.pending = undefined;
       this.lostHandled = false;
       this.clearExpiryTimer();
@@ -148,7 +154,7 @@ export class BluetoothResumeManager {
     this.pending = {
       deviceId: deviceId,
       disconnectedAt: now,
-      deadline: now + 120 * 60 * 1000
+      deadline: now + this.resumeWindowMinutes * 60 * 1000
     };
     this.clearExpiryTimer();
     this.expiryTimer = setTimeout(() => {
@@ -158,8 +164,8 @@ export class BluetoothResumeManager {
       if (pending !== undefined) {
         this.callbacks.onWindowExpired(pending.deviceId);
       }
-    }, 120 * 60 * 1000);
-    this.callbacks.onDiagnostics(`${reason}，已记录 120 分钟续播窗口`);
+    }, this.resumeWindowMinutes * 60 * 1000);
+    this.callbacks.onDiagnostics(`${reason}，已记录 ${this.resumeWindowMinutes} 分钟续播窗口`);
     this.callbacks.onBluetoothLost(deviceId);
   }
 

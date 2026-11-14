@@ -21,6 +21,7 @@ export interface RadioSnapshot {
   statusText: string;
   diagnostics: string;
   sleepTimerMinutes: number;
+  sleepTimerEndAt: number;
 }
 
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
@@ -49,6 +50,7 @@ export class RadioController {
   private isPlaying: boolean = false;
   private pausedByUser: boolean = true;
   private sleepTimerMinutes: number = 0;
+  private sleepTimerEndAt: number = 0;
   private sleepTimer: number = -1;
   private reconnectTimer: number = -1;
   private reconnectAttempt: number = 0;
@@ -78,6 +80,7 @@ export class RadioController {
   async init(context: common.UIAbilityContext, settings: AppSettings): Promise<void> {
     this.context = context;
     this.settings = settings;
+    this.bluetooth.setResumeWindowMinutes(settings.resumeWindowMinutes);
     if (settings.autoResume && this.context !== undefined) {
       this.bluetooth.start();
     }
@@ -100,6 +103,7 @@ export class RadioController {
 
   async applySettings(settings: AppSettings): Promise<void> {
     this.settings = settings;
+    this.bluetooth.setResumeWindowMinutes(settings.resumeWindowMinutes);
     if (settings.autoResume) {
       this.bluetooth.start();
     } else {
@@ -122,7 +126,8 @@ export class RadioController {
       waitingForBluetooth: this.waitingForBluetooth,
       statusText: this.statusText,
       diagnostics: this.diagnostics,
-      sleepTimerMinutes: this.sleepTimerMinutes
+      sleepTimerMinutes: this.sleepTimerMinutes,
+      sleepTimerEndAt: this.sleepTimerEndAt
     };
   }
 
@@ -137,6 +142,7 @@ export class RadioController {
       clearTimeout(this.sleepTimer);
       this.sleepTimer = -1;
       this.sleepTimerMinutes = 0;
+      this.sleepTimerEndAt = 0;
     }
     this.waitingForBluetooth = false;
     this.pausedByUser = false;
@@ -237,6 +243,7 @@ export class RadioController {
       clearTimeout(this.sleepTimer);
       this.sleepTimer = -1;
       this.sleepTimerMinutes = 0;
+      this.sleepTimerEndAt = 0;
     }
     if (this.player !== undefined) {
       await this.player.release();
@@ -275,13 +282,19 @@ export class RadioController {
     }
     this.sleepTimerMinutes = minutes;
     if (minutes > 0) {
+      this.sleepTimerEndAt = Date.now() + minutes * 60 * 1000;
       this.sleepTimer = setTimeout(() => {
         this.sleepTimer = -1;
         this.sleepTimerMinutes = 0;
+        this.sleepTimerEndAt = 0;
         this.pause('睡眠定时已结束', true);
       }, minutes * 60 * 1000);
-      this.statusText = `${minutes} 分钟后停止播放`;
+      const end = new Date(this.sleepTimerEndAt);
+      const hour = end.getHours().toString().padStart(2, '0');
+      const minute = end.getMinutes().toString().padStart(2, '0');
+      this.statusText = `${minutes} 分钟后于 ${hour}:${minute} 停止播放`;
     } else {
+      this.sleepTimerEndAt = 0;
       this.statusText = '睡眠定时已关闭';
     }
     this.notify();
@@ -460,7 +473,8 @@ export class RadioController {
     await this.pause('蓝牙已断开，等待同一设备重连', false);
     await this.silentKeepAlive.start();
     this.waitingForBluetooth = true;
-    this.statusText = '蓝牙已断开，120 分钟内重连将自动续播';
+    this.statusText =
+      `蓝牙已断开，${this.settings.resumeWindowMinutes} 分钟内重连将自动续播`;
     this.notify();
   }
 
@@ -480,7 +494,8 @@ export class RadioController {
     if (this.context !== undefined) {
       await this.backgroundTasks.stop(this.context);
     }
-    this.statusText = `蓝牙设备 ${deviceId} 超过 120 分钟未重连`;
+    this.statusText =
+      `蓝牙设备 ${deviceId} 超过 ${this.settings.resumeWindowMinutes} 分钟未重连`;
     this.notify();
   }
 

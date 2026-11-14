@@ -10,17 +10,20 @@ import {
 import { StationRepository } from '../data/StationRepository';
 import { RadioController, RadioSnapshot, RadioStateListener } from '../services/RadioController';
 import { WebDavBackupService, WebDavConfig } from '../services/WebDavBackupService';
-import { WebDavBackupEntry } from '../utils/BackupModel';
+import { orderStationsByBackup, WebDavBackupEntry } from '../utils/BackupModel';
 import { isSearchStationAdded, shouldShowSearchResults } from '../utils/SearchModel';
 import { AppUpdateService, NativeUpdateInfo } from '../services/AppUpdateService';
 import { StationIconPicker } from '../services/StationIconPicker';
 import { LocalFileService } from '../services/LocalFileService';
+import { AndroidBackupSettingsPatch, parseAndroidV108Backup } from '../utils/AndroidBackupModel';
 import { M3uPlaylistService, M3uEntry } from '../services/M3uPlaylistService';
 import { StationSearchService } from '../services/StationSearchService';
 import { findTheme, THEME_PRESETS, ThemePreset } from '../models/ThemePreset';
+import { formatSleepTimerEnd, normalizeResumeWindowMinutes } from '../utils/TimeSettings';
 
 const COLOR_DANGER_BG: string = '#E9B7B3';
 const COLOR_DANGER: string = '#B3261E';
+const STATION_SWIPE_ACTION_WIDTH: number = 76;
 
 @Entry
 @Component
@@ -32,11 +35,13 @@ struct Index {
   @State playbackStatus: string = '选择电台后开始播放';
   @State diagnostics: string = '蓝牙监听尚未启动';
   @State sleepTimerMinutes: number = 0;
+  @State sleepTimerEndAt: number = 0;
   @State showSleepPanel: boolean = false;
   @State showSettings: boolean = false;
   @State showEditor: boolean = false;
   @State showWebDav: boolean = false;
   @State showTheme: boolean = false;
+  @State showResumeWindow: boolean = false;
   @State pendingDelete: Station | undefined = undefined;
   @State swipedStationId: string = '';
   @State swipingStationId: string = '';
@@ -78,6 +83,7 @@ struct Index {
     this.playbackStatus = snapshot.statusText;
     this.diagnostics = snapshot.diagnostics;
     this.sleepTimerMinutes = snapshot.sleepTimerMinutes;
+    this.sleepTimerEndAt = snapshot.sleepTimerEndAt;
   };
 
   aboutToAppear(): void {
@@ -464,7 +470,7 @@ struct Index {
       return;
     }
     this.swipingStationId = stationId;
-    this.stationSwipeDistance = Math.max(-88, Math.min(0, offset));
+    this.stationSwipeDistance = Math.max(-STATION_SWIPE_ACTION_WIDTH, Math.min(0, offset));
     if (this.stationSwipeDistance <= -32) {
       this.swipedStationId = stationId;
     }
@@ -496,7 +502,7 @@ struct Index {
       return 0;
     }
     if (this.swipedStationId === stationId) {
-      return -88;
+      return -STATION_SWIPE_ACTION_WIDTH;
     }
     if (this.swipingStationId === stationId) {
       return this.stationSwipeDistance;
@@ -514,9 +520,18 @@ struct Index {
   private updateAutoResume(value: boolean): void {
     const settings = copySettings(this.settings);
     settings.autoResume = value;
-    settings.resumeWindowMinutes = 120;
     this.settings = settings;
     this.persistSettings();
+  }
+
+  private async updateResumeWindowMinutes(minutes: number): Promise<void> {
+    const settings = copySettings(this.settings);
+    settings.resumeWindowMinutes = normalizeResumeWindowMinutes(minutes);
+    this.settings = settings;
+    this.showResumeWindow = false;
+    await this.radio.applySettings(this.settings);
+    await this.persistSettings();
+    this.settingsStatus = `蓝牙续播窗口已设为 ${this.settings.resumeWindowMinutes} 分钟`;
   }
 
   private updateDynamicColor(value: boolean): void {
@@ -709,19 +724,102 @@ struct Index {
       return;
     }
     try {
-      const text = await this.localFiles.pickText(this.abilityContext, 'QYFM 备份|.json,.txt');
-      if (text.length === 0) {
+      const picked = await this.localFiles.pickBackup(this.abilityContext);
+      if (picked === undefined) {
         return;
       }
-      const result = this.repository.parseBackup(text);
-      this.stations = result.stations;
+      if (picked.isZip) {
+        if (picked.archive === undefined) {
+          throw new Error('无法读取 Android 备份压缩包');
+        }
+        const archive = picked.archive;
+        const restored = parseAndroidV108Backup(
+          archive.manifestText,
+          archive.playlistText,
+          archive.playlistM3uText,
+          archive.settingsText,
+          archive.logos
+        );
+        const ordered = orderStationsByBackup(restored.stations, restored.stationOrder);
+        this.stations = ordered.map((station): Station => {
+          return {
+            id: station.id,
+            name: station.name,
+            streamUrl: station.streamUrl,
+            iconUrl: station.iconUrl,
+            tags: station.tags,
+            country: station.country,
+            state: station.state,
+            favorite: station.favorite
+          };
+        });
+        const settings = copySettings(this.settings);
+        settings.webdavPassword = this.settings.webdavPassword;
+        this.applyAndroidBackupSettings(settings, restored.settings);
+        this.settings = settings;
+      } else {
+        const result = this.repository.parseBackup(picked.text);
+        this.stations = result.stations;
+        result.settings.webdavPassword = this.settings.webdavPassword;
+        this.settings = result.settings;
+      }
+      this.palette = findTheme(this.settings.themeId);
       this.currentStation = this.stations.length > 0 ? this.stations[0] : undefined;
       await this.repository.saveStations(this.stations);
+      await this.repository.saveSettings(this.settings);
       await this.radio.stop();
-      this.settingsStatus = `已恢复 ${this.stations.length} 个电台`;
+      await this.radio.applySettings(this.settings);
+      this.settingsStatus = picked.isZip
+        ? `已从 Android ZIP 恢复 ${this.stations.length} 个电台、台标和原顺序`
+        : `已恢复 ${this.stations.length} 个电台`;
     } catch (error) {
       const businessError = error as BusinessError;
       this.settingsStatus = businessError.message;
+    }
+  }
+
+  private applyAndroidBackupSettings(settings: AppSettings, patch: AndroidBackupSettingsPatch): void {
+    if (patch.dynamicColor !== undefined) {
+      settings.dynamicColor = patch.dynamicColor;
+    }
+    if (patch.transparentUi !== undefined) {
+      settings.transparentUi = patch.transparentUi;
+    }
+    if (patch.clickStationToPlay !== undefined) {
+      settings.clickStationToPlay = patch.clickStationToPlay;
+    }
+    if (patch.editMode !== undefined) {
+      settings.editMode = patch.editMode;
+    }
+    if (patch.editStreamUrl !== undefined) {
+      settings.editStreamUrl = patch.editStreamUrl;
+    }
+    if (patch.autoPlayOnLaunch !== undefined) {
+      settings.autoPlayOnLaunch = patch.autoPlayOnLaunch;
+    }
+    if (patch.playbackMemory !== undefined) {
+      settings.playbackMemory = patch.playbackMemory;
+    }
+    if (patch.fastStart !== undefined) {
+      settings.fastStart = patch.fastStart;
+    }
+    if (patch.largeBuffer !== undefined) {
+      settings.largeBuffer = patch.largeBuffer;
+    }
+    if (patch.pauseOnUnplug !== undefined) {
+      settings.pauseOnUnplug = patch.pauseOnUnplug;
+    }
+    if (patch.autoUpdate !== undefined) {
+      settings.autoUpdate = patch.autoUpdate;
+    }
+    if (patch.webdavUrl !== undefined) {
+      settings.webdavUrl = patch.webdavUrl;
+    }
+    if (patch.webdavUser !== undefined) {
+      settings.webdavUser = patch.webdavUser;
+    }
+    if (patch.webdavFile !== undefined) {
+      settings.webdavFile = patch.webdavFile;
     }
   }
 
@@ -839,6 +937,9 @@ struct Index {
         this.showWebDav = true;
         this.refreshWebDavBackups();
         break;
+      case 'resumeWindow':
+        this.showResumeWindow = true;
+        break;
       case 'checkUpdate':
         await this.checkForUpdates(true);
         break;
@@ -860,14 +961,14 @@ struct Index {
   StationDeleteAction(id: string) {
     Column() {
       if (this.settings.editMode) {
-        Text('−')
-          .width(44)
+        Text('删除')
+          .width(56)
           .height(44)
           .textAlign(TextAlign.Center)
-          .fontSize(30)
+          .fontSize(14)
           .fontColor(COLOR_DANGER)
-          .borderRadius(22)
-          .border({ width: 1.2, color: COLOR_DANGER })
+          .borderRadius(14)
+          .border({ width: 1, color: COLOR_DANGER })
           .onClick(() => {
             const station = this.stations.find((item: Station) => item.id === id);
             if (station !== undefined) {
@@ -876,12 +977,13 @@ struct Index {
           })
       }
     }
-    .width(this.settings.editMode ? 88 : 0)
-    .height('100%')
+    .width(this.settings.editMode ? STATION_SWIPE_ACTION_WIDTH : 0)
+    .height(64)
     .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.End)
-    .padding({ right: 24 })
+    .alignItems(HorizontalAlign.Center)
     .backgroundColor(COLOR_DANGER_BG)
+    .borderRadius(18)
+    .margin({ bottom: 18 })
   }
 
   @Builder
@@ -1047,6 +1149,14 @@ struct Index {
         }, (minutes: number) => minutes.toString())
       }
       .width('100%')
+      if (this.sleepTimerMinutes > 0 && this.sleepTimerEndAt > 0) {
+        Text(formatSleepTimerEnd(new Date(this.sleepTimerEndAt), 0))
+          .width('100%')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryColor())
+          .textAlign(TextAlign.Center)
+      }
     }
     .width('100%')
     .padding(14)
@@ -1389,7 +1499,7 @@ struct Index {
         ListItem() { this.SettingsActionRow('↗', '导出 M3U', '保存为可被其它播放器导入的 M3U 列表。', 'exportM3u') }
         ListItem() { this.SettingsActionRow('↙', '导入 M3U', '从 M3U / M3U8 播放列表追加电台。', 'importM3u') }
         ListItem() { this.SettingsActionRow('⇩', '备份电台', '保存包含台标与顺序的本地 JSON 备份。', 'backupLocal') }
-        ListItem() { this.SettingsActionRow('⇧', '恢复电台', '从本地备份恢复并保持原顺序。', 'restoreLocal') }
+        ListItem() { this.SettingsActionRow('⇧', '恢复电台', '支持 JSON 和 v1.0.8 ZIP（M3U、台标、顺序）。', 'restoreLocal') }
         ListItem() { this.SettingsActionRow('☁', '在线备份 (WebDAV)', '备份电台、台标、设置与上下顺序。', 'webdav') }
 
         ListItem() {
@@ -1417,7 +1527,20 @@ struct Index {
           this.SettingsSwitchRow('⇄', '拔出耳机自动暂停', '耳机或蓝牙断开时自动暂停，避免外放。', 'pauseOnUnplug')
         }
         ListItem() {
-          this.SettingsSwitchRow('✓', '蓝牙重连自动续播', '同一设备 120 分钟内重连时自动续播。', 'autoResume')
+          this.SettingsSwitchRow(
+            '✓',
+            '蓝牙重连自动续播',
+            `同一设备 ${this.settings.resumeWindowMinutes} 分钟内重连时自动续播。`,
+            'autoResume'
+          )
+        }
+        ListItem() {
+          this.SettingsActionRow(
+            '⏱',
+            '蓝牙续播窗口',
+            `${this.settings.resumeWindowMinutes} 分钟 · 点击修改`,
+            'resumeWindow'
+          )
         }
         ListItem() {
           this.SettingsDivider()
@@ -1425,7 +1548,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.2 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.3 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -1469,6 +1592,68 @@ struct Index {
         .border({ width: 1, color: this.palette.divider })
     }
     .width('100%')
+  }
+
+  @Builder
+  ResumeWindowDialog() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('蓝牙续播窗口')
+          .fontSize(21)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.palette.textPrimary)
+          .layoutWeight(1)
+        Text('×')
+          .width(32)
+          .height(32)
+          .textAlign(TextAlign.Center)
+          .fontSize(24)
+          .fontColor(this.palette.textSecondary)
+          .onClick(() => {
+            this.showResumeWindow = false;
+          })
+      }
+      .width('100%')
+      Text('耳机断开后，同一设备在所选时间内重连会自动继续播放。')
+        .width('100%')
+        .fontSize(13)
+        .fontColor(this.palette.textSecondary)
+      List({ space: 4 }) {
+        ForEach([15, 30, 60, 120, 240, 480], (minutes: number) => {
+          ListItem() {
+            Row() {
+              Text(`${minutes} 分钟`)
+                .fontSize(16)
+                .fontColor(this.palette.textPrimary)
+                .layoutWeight(1)
+              if (this.settings.resumeWindowMinutes === minutes) {
+                Text('✓')
+                  .fontSize(18)
+                  .fontColor(this.primaryColor())
+              }
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 12, right: 12 })
+            .borderRadius(12)
+            .backgroundColor(this.settings.resumeWindowMinutes === minutes
+              ? this.palette.nowPlaying
+              : this.palette.surface)
+            .onClick(() => {
+              this.updateResumeWindowMinutes(minutes);
+            })
+          }
+        }, (minutes: number) => minutes.toString())
+      }
+      .width('100%')
+      .height(320)
+      .scrollBar(BarState.Off)
+    }
+    .width('88%')
+    .padding(18)
+    .borderRadius(24)
+    .backgroundColor(this.palette.background)
+    .shadow({ radius: 26, color: '#33000000', offsetY: 8 })
   }
 
   @Builder
@@ -2022,6 +2207,17 @@ struct Index {
       if (this.showTheme) {
         Column() {
           this.ThemeDialog()
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#66000000')
+      }
+
+      if (this.showResumeWindow) {
+        Column() {
+          this.ResumeWindowDialog()
         }
         .width('100%')
         .height('100%')

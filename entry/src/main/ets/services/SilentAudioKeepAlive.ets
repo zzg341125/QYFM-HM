@@ -4,7 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 /**
  * HarmonyOS 会在蓝牙断开约 1 分钟后结束空闲的蓝牙长时任务。
  * 等待重连时保持一条极低开销的静音音频流，使音频长时任务持续有效，
- * 从而能接收 120 分钟内的同设备重连事件。静音流不会请求可见媒体控制。
+ * 从而能接收用户设置窗口内的同设备重连事件。静音流不会请求可见媒体控制。
  */
 export class SilentAudioKeepAlive {
   private renderer: audio.AudioRenderer | undefined = undefined;
