@@ -18,11 +18,12 @@ test('prefers the signed APP package and otherwise selects a signed HAP', () => 
     { name: 'QYFM-HM-source.zip', browser_download_url: 'https://example.com/source.zip', size: 100 },
     { name: 'QYFM-HM-unsigned.hap', browser_download_url: 'https://example.com/unsigned.hap', size: 200 },
     { name: 'QYFM-HM-signed.hap', browser_download_url: 'https://example.com/signed.hap', size: 300 },
-    { name: 'QYFM-HM-signed.app', browser_download_url: 'https://example.com/signed.app', size: 400 }
+    { name: 'QYFM-HM-signed.app', browser_download_url: 'https://example.com/signed.app', size: 400 },
+    { name: 'QYFM-HM-signed.app.zip', browser_download_url: 'https://example.com/signed.app.zip', size: 500 }
   ]);
 
-  assert.equal(asset?.name, 'QYFM-HM-signed.app');
-  assert.equal(asset?.browser_download_url, 'https://example.com/signed.app');
+  assert.equal(asset?.name, 'QYFM-HM-signed.app.zip');
+  assert.equal(asset?.browser_download_url, 'https://example.com/signed.app.zip');
   assert.equal(installUtdForFileName('QYFM-HM-signed.app'), 'openharmony.package');
   assert.equal(installUtdForFileName('QYFM-HM-signed.hap'), 'openharmony.hap');
 });

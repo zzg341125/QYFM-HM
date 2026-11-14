@@ -30,11 +30,24 @@ export function isNewerVersion(remote: string, current: string): boolean {
 
 export function selectInstallAsset(assets: UpdateAsset[]): UpdateAsset | undefined {
   const installAssets = assets.filter((asset: UpdateAsset) =>
-    (asset.name.toLowerCase().endsWith('.app') || asset.name.toLowerCase().endsWith('.hap')) &&
+    (asset.name.toLowerCase().endsWith('.app') ||
+      asset.name.toLowerCase().endsWith('.app.zip') ||
+      asset.name.toLowerCase().endsWith('.hap')) &&
     asset.browser_download_url.toLowerCase().startsWith('https://') &&
     !asset.name.toLowerCase().includes('unsigned'));
-  const appAssets = installAssets.filter((asset: UpdateAsset) => asset.name.toLowerCase().endsWith('.app'));
+  const appZipAssets = installAssets.filter((asset: UpdateAsset) =>
+    asset.name.toLowerCase().endsWith('.app.zip'));
+  const appAssets = installAssets.filter((asset: UpdateAsset) =>
+    asset.name.toLowerCase().endsWith('.app') && !asset.name.toLowerCase().endsWith('.app.zip'));
   const hapAssets = installAssets.filter((asset: UpdateAsset) => asset.name.toLowerCase().endsWith('.hap'));
+  const signedAppZip = appZipAssets.find((asset: UpdateAsset) =>
+    asset.name.toLowerCase().includes('signed'));
+  if (signedAppZip !== undefined) {
+    return signedAppZip;
+  }
+  if (appZipAssets.length > 0) {
+    return appZipAssets[0];
+  }
   const signedApp = appAssets.find((asset: UpdateAsset) => asset.name.toLowerCase().includes('signed'));
   if (signedApp !== undefined) {
     return signedApp;
@@ -68,7 +81,9 @@ export function buildUpdateFileName(tag: string, assetName: string): string {
     .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-  if (safeName.toLowerCase().endsWith('.hap') || safeName.toLowerCase().endsWith('.app')) {
+  if (safeName.toLowerCase().endsWith('.hap') ||
+    safeName.toLowerCase().endsWith('.app') ||
+    safeName.toLowerCase().endsWith('.app.zip')) {
     return safeName;
   }
   const safeTag = tag.replace(/[^A-Za-z0-9._-]+/g, '-');

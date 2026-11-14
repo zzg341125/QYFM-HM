@@ -1,7 +1,7 @@
 import { common, Want, wantConstant } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
 import { updateManager } from '@kit.AppGalleryKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, zlib } from '@kit.BasicServicesKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 import {
   buildUpdateFileName,
@@ -13,7 +13,7 @@ import {
 
 const GITHUB_RELEASES_URL: string =
   'https://api.github.com/repos/zzg341125/QYFM-HM/releases?per_page=30';
-const CURRENT_VERSION: string = '1.0.9';
+const CURRENT_VERSION: string = '1.0.10';
 
 export interface NativeUpdateInfo {
   version: string;
@@ -129,6 +129,16 @@ export class AppUpdateService {
         fileIo.writeSync(file.fd, response.result);
       } finally {
         fileIo.closeSync(file);
+      }
+      if (fileName.toLowerCase().endsWith('.app.zip')) {
+        const outputDir = `${context.filesDir}/qyfm-update-${Date.now()}`;
+        await zlib.decompressFile(path, outputDir);
+        const appFile = fileIo.listFileSync(outputDir)
+          .find((name: string) => name.toLowerCase().endsWith('.app'));
+        if (appFile === undefined) {
+          throw new Error('更新压缩包中没有 APP 安装包');
+        }
+        return `${outputDir}/${appFile}`;
       }
       return path;
     } catch (error) {
