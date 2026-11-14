@@ -59,6 +59,9 @@ struct Index {
   @State settings: AppSettings = createDefaultSettings();
   @State settingsStatus: string = '';
   @State updateInfo: NativeUpdateInfo | undefined = undefined;
+  @State downloadingUpdate: boolean = false;
+  @State updateDownloadPath: string = '';
+  @State updateStatus: string = '';
   @State busy: boolean = false;
   @State webDavBackups: WebDavBackupEntry[] = [];
   @State selectedWebDavFile: string = '';
@@ -455,8 +458,12 @@ struct Index {
     const release = await this.updateService.checkNativeRelease();
     if (release !== undefined) {
       this.updateInfo = release;
+      this.updateDownloadPath = '';
+      this.updateStatus = '';
       if (manual) {
         this.settingsStatus = `发现原生鸿蒙新版本 ${release.version}`;
+      } else if (this.settings.autoUpdate) {
+        await this.downloadUpdatePackage();
       }
       return;
     }
@@ -478,6 +485,55 @@ struct Index {
     }
     await this.updateService.openReleasePage(this.abilityContext, this.updateInfo.pageUrl);
     this.updateInfo = undefined;
+  }
+
+  private async downloadUpdatePackage(): Promise<boolean> {
+    if (this.abilityContext === undefined || this.updateInfo === undefined) {
+      return false;
+    }
+    if (this.downloadingUpdate) {
+      return this.updateDownloadPath.length > 0;
+    }
+    this.downloadingUpdate = true;
+    this.updateStatus = '正在从 GitHub 下载更新…';
+    try {
+      this.updateDownloadPath = await this.updateService.downloadHap(
+        this.abilityContext,
+        this.updateInfo
+      );
+      this.updateStatus = '更新已下载，可立即安装';
+      return true;
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.updateDownloadPath = '';
+      this.updateStatus = businessError.message;
+      return false;
+    } finally {
+      this.downloadingUpdate = false;
+    }
+  }
+
+  private async installDownloadedUpdate(): Promise<void> {
+    if (this.abilityContext === undefined || this.updateInfo === undefined) {
+      return;
+    }
+    if (this.updateDownloadPath.length === 0 && !(await this.downloadUpdatePackage())) {
+      return;
+    }
+    try {
+      this.updateStatus = '正在打开系统安装器…';
+      await this.updateService.installHap(this.abilityContext, this.updateDownloadPath);
+      this.updateStatus = '已打开系统安装器，请在手机页面确认安装';
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.updateStatus = `无法打开系统安装器：${businessError.message ?? '未知错误'}`;
+    }
+  }
+
+  private async downloadAndInstallUpdate(): Promise<void> {
+    if (await this.downloadUpdatePackage()) {
+      await this.installDownloadedUpdate();
+    }
   }
 
   private updateEditMode(value: boolean): void {
@@ -1593,7 +1649,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.4 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.5 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -2219,8 +2275,16 @@ struct Index {
         Text(this.updateInfo.notes.length > 0 ? this.updateInfo.notes : '请前往发布页下载最新 HAP。')
           .fontSize(14)
           .fontColor(this.palette.textSecondary)
-          .maxLines(6)
+          .maxLines(5)
           .width('100%')
+        if (this.updateStatus.length > 0) {
+          Text(this.updateStatus)
+            .width('100%')
+            .fontSize(13)
+            .fontColor(this.updateDownloadPath.length > 0
+              ? this.primaryColor()
+              : this.palette.textSecondary)
+        }
         Row({ space: 10 }) {
           Button('稍后')
             .layoutWeight(1)
@@ -2230,17 +2294,34 @@ struct Index {
             .borderRadius(22)
             .onClick(() => {
               this.updateInfo = undefined;
+              this.updateStatus = '';
             })
-          Button('前往更新')
+          Button(this.downloadingUpdate
+            ? '下载中…'
+            : (this.updateDownloadPath.length > 0 ? '立即安装' : '下载并安装'))
             .layoutWeight(1)
             .height(44)
             .backgroundColor(this.primaryColor())
             .fontColor(Color.White)
             .borderRadius(22)
+            .enabled(!this.downloadingUpdate)
             .onClick(() => {
-              this.openReleasePage();
+              if (this.updateDownloadPath.length > 0) {
+                this.installDownloadedUpdate();
+              } else {
+                this.downloadAndInstallUpdate();
+              }
             })
         }
+        Button('前往 GitHub 发布页')
+          .width('100%')
+          .height(40)
+          .backgroundColor(this.palette.surfaceVariant)
+          .fontColor(this.palette.textPrimary)
+          .borderRadius(20)
+          .onClick(() => {
+            this.openReleasePage();
+          })
       }
       .width('88%')
       .padding(18)

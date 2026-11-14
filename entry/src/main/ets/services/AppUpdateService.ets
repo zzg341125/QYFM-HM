@@ -1,17 +1,27 @@
-import { common } from '@kit.AbilityKit';
+import { common, Want, wantConstant } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
 import { updateManager } from '@kit.AppGalleryKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { fileIo, fileUri } from '@kit.CoreFileKit';
+import {
+  buildUpdateFileName,
+  isNewerVersion,
+  selectHapAsset,
+  UpdateAsset
+} from '../utils/UpdateModel';
 
 const GITHUB_RELEASES_URL: string =
   'https://api.github.com/repos/zzg341125/QYFM-HM/releases?per_page=30';
-const CURRENT_VERSION: string = '1.0.4';
+const CURRENT_VERSION: string = '1.0.5';
 
 export interface NativeUpdateInfo {
   version: string;
   title: string;
   notes: string;
   pageUrl: string;
+  downloadUrl: string;
+  assetName: string;
+  assetSize: number;
 }
 
 interface GitHubRelease {
@@ -21,35 +31,12 @@ interface GitHubRelease {
   html_url: string;
   prerelease: boolean;
   draft: boolean;
+  assets?: UpdateAsset[];
 }
 
 class GitHubHeaders {
   'Accept': string = 'application/vnd.github+json';
   'User-Agent': string = 'QYFM-HarmonyOS';
-}
-
-function parseVersion(value: string): number[] {
-  return value.replace(/^harmony-v/i, '').replace(/^v/i, '').split('.').map((part: string) => {
-    const match = part.match(/^\d+/);
-    return match === null ? 0 : Number(match[0]);
-  });
-}
-
-function isNewer(remote: string, current: string): boolean {
-  const remoteParts = parseVersion(remote);
-  const currentParts = parseVersion(current);
-  const count = Math.max(remoteParts.length, currentParts.length);
-  for (let index = 0; index < count; index++) {
-    const remotePart = remoteParts[index] ?? 0;
-    const currentPart = currentParts[index] ?? 0;
-    if (remotePart > currentPart) {
-      return true;
-    }
-    if (remotePart < currentPart) {
-      return false;
-    }
-  }
-  return false;
 }
 
 export class AppUpdateService {
@@ -72,12 +59,16 @@ export class AppUpdateService {
         if (release.draft || release.prerelease || !release.tag_name.toLowerCase().startsWith('harmony-v')) {
           continue;
         }
-        if (isNewer(release.tag_name, CURRENT_VERSION)) {
+        if (isNewerVersion(release.tag_name, CURRENT_VERSION)) {
+          const asset = selectHapAsset(release.assets ?? []);
           return {
             version: release.tag_name,
             title: release.name.length > 0 ? release.name : release.tag_name,
             notes: release.body,
-            pageUrl: release.html_url
+            pageUrl: release.html_url,
+            downloadUrl: asset?.browser_download_url ?? '',
+            assetName: asset?.name ?? '',
+            assetSize: asset?.size ?? 0
           };
         }
       }
@@ -107,5 +98,57 @@ export class AppUpdateService {
 
   async openReleasePage(context: common.UIAbilityContext, url: string): Promise<void> {
     await context.openLink(url);
+  }
+
+  async downloadHap(context: common.UIAbilityContext, update: NativeUpdateInfo): Promise<string> {
+    if (update.downloadUrl.length === 0) {
+      throw new Error('该版本没有可下载的签名 HAP');
+    }
+    const request = http.createHttp();
+    try {
+      const response = await request.request(update.downloadUrl, {
+        method: http.RequestMethod.GET,
+        header: new GitHubHeaders(),
+        connectTimeout: 20000,
+        readTimeout: 120000,
+        maxLimit: 200 * 1024 * 1024,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        usingCache: false
+      });
+      if (response.responseCode !== 200 || !(response.result instanceof ArrayBuffer)) {
+        throw new Error(`下载更新失败：HTTP ${response.responseCode}`);
+      }
+      const fileName = buildUpdateFileName(update.version, update.assetName);
+      const path = `${context.filesDir}/${fileName}`;
+      const file = fileIo.openSync(
+        path,
+        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
+      try {
+        fileIo.writeSync(file.fd, response.result);
+      } finally {
+        fileIo.closeSync(file);
+      }
+      return path;
+    } catch (error) {
+      const businessError = error as BusinessError;
+      throw new Error(businessError.message ?? '下载更新失败');
+    } finally {
+      request.destroy();
+    }
+  }
+
+  async installHap(context: common.UIAbilityContext, path: string): Promise<void> {
+    const uri = fileUri.getUriFromPath(path);
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      uri: uri,
+      type: 'openharmony.hap',
+      flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION,
+      parameters: {
+        'ability.params.stream': [uri]
+      }
+    };
+    await context.startAbility(want);
   }
 }
