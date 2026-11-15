@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   HttpChunkDecoder,
   IcyMetadataStripper,
-  isProgressiveMp3Url,
+  isProgressiveAudioUrl,
   parseHttpEndpoint,
   parseIcyMetaint,
   parseIcyMetaintFromHeaderText
@@ -31,14 +31,15 @@ test('removes Icecast metadata split across network chunks', () => {
   assert.deepEqual(Array.from(second), [5, 6, 7, 8, 9, 10]);
 });
 
-test('recognizes old MP3 links that may carry Icecast metadata', () => {
-  assert.equal(isProgressiveMp3Url('http://lhttp.qingting.fm/live/4915/64k.mp3'), true);
-  assert.equal(isProgressiveMp3Url('https://radio.example/live.MP3?token=1'), true);
+test('recognizes old MP3 and AAC links that may carry Icecast metadata', () => {
+  assert.equal(isProgressiveAudioUrl('http://lhttp.qingting.fm/live/4915/64k.mp3'), true);
+  assert.equal(isProgressiveAudioUrl('https://radio.example/live.MP3?token=1'), true);
   assert.equal(
-    isProgressiveMp3Url('https://video1.getstreamhosting.com:8292/stream?.mp3'),
+    isProgressiveAudioUrl('https://video1.getstreamhosting.com:8292/stream?.mp3'),
     true
   );
-  assert.equal(isProgressiveMp3Url('https://radio.example/live.m3u8'), false);
+  assert.equal(isProgressiveAudioUrl('https://radio.example/live.aac'), true);
+  assert.equal(isProgressiveAudioUrl('https://radio.example/live.m3u8'), false);
 });
 
 test('parses legacy HTTP Icecast endpoints and chunked response bodies', () => {

@@ -798,6 +798,14 @@ struct Index {
     this.persistSettings();
   }
 
+  private updateFfmpegDecoder(value: boolean): void {
+    const settings = copySettings(this.settings);
+    settings.ffmpegDecoder = value;
+    this.settings = settings;
+    this.radio.applySettings(settings);
+    this.persistSettings();
+  }
+
   private async selectTheme(theme: ThemePreset): Promise<void> {
     const settings = copySettings(this.settings);
     settings.themeId = theme.id;
@@ -1076,6 +1084,8 @@ struct Index {
         return this.settings.autoPlayOnBluetoothConnect;
       case 'icecastCompatibility':
         return this.settings.icecastCompatibility;
+      case 'ffmpegDecoder':
+        return this.settings.ffmpegDecoder;
       case 'autoResume':
         return this.settings.autoResume;
       case 'autoUpdate':
@@ -1125,6 +1135,9 @@ struct Index {
         break;
       case 'icecastCompatibility':
         this.updateIcecastCompatibility(value);
+        break;
+      case 'ffmpegDecoder':
+        this.updateFfmpegDecoder(value);
         break;
       case 'autoResume':
         this.updateAutoResume(value);
@@ -1787,6 +1800,14 @@ struct Index {
           )
         }
         ListItem() {
+          this.SettingsSwitchRow(
+            'FF',
+            '独立 FFmpeg 解码',
+            'MP3/AAC 使用独立 FFmpeg 解码并由 AudioRenderer 输出 PCM；关闭后使用系统播放器。',
+            'ffmpegDecoder'
+          )
+        }
+        ListItem() {
           this.SettingsActionRow('⌁', '蓝牙设备识别权限', this.diagnostics, 'bluetoothPermission')
         }
         ListItem() {
@@ -1830,7 +1851,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.21 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.23 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

@@ -1,0 +1,6 @@
+{
+  "name": "libqyfm_ffmpeg.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "QYFM FFmpeg MP3 and AAC decoder"
+}

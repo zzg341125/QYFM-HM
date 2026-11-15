@@ -6,6 +6,7 @@ import { audio } from '@kit.AudioKit';
 import { AppSettings, createDefaultSettings, Station, StreamLine } from '../models/Station';
 import { BackgroundTaskService } from './BackgroundTaskService';
 import { BluetoothResumeCallbacks, BluetoothResumeManager } from './BluetoothResumeManager';
+import { FfmpegAudioPlayer, FfmpegPlayerState } from './FfmpegAudioPlayer';
 import { IcecastStreamRelay } from './IcecastStreamRelay';
 import { RadioCnResolver } from './RadioCnResolver';
 import { SilentAudioKeepAlive } from './SilentAudioKeepAlive';
@@ -36,7 +37,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.21 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.23 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -50,6 +51,8 @@ export class RadioController {
 
   private context: common.UIAbilityContext | undefined = undefined;
   private player: media.AVPlayer | undefined = undefined;
+  private ffmpegPlayer: FfmpegAudioPlayer | undefined = undefined;
+  private ffmpegFallbackUrl: string = '';
   private icyRelay: IcecastStreamRelay | undefined = undefined;
   private session: avSession.AVSession | undefined = undefined;
   private currentStation: Station | undefined = undefined;
@@ -160,6 +163,7 @@ export class RadioController {
 
   async playStation(station: Station): Promise<void> {
     this.playbackRequestedAt = Date.now();
+    this.ffmpegFallbackUrl = '';
     console.info(`起播计时开始: ${station.name}`);
     const context = this.context;
     if (context === undefined) {
@@ -240,7 +244,24 @@ export class RadioController {
       return;
     }
     const player = this.player;
+    const ffmpegPlayer = this.ffmpegPlayer;
     this.clearRecoveryTimers();
+    if (ffmpegPlayer !== undefined) {
+      try {
+        this.waitingForBluetooth = false;
+        this.pausedByUser = false;
+        this.audioInterrupted = false;
+        await this.silentKeepAlive.stop();
+        await ffmpegPlayer.resume();
+        this.statusText = reason;
+        this.notify();
+      } catch (error) {
+        const businessError = error as BusinessError;
+        this.statusText = `继续播放失败：${businessError.message ?? '未知错误'}`;
+        this.notify();
+      }
+      return;
+    }
     if (player === undefined || (player.state !== 'paused' && player.state !== 'prepared')) {
       await this.playStation(this.currentStation);
       return;
@@ -275,7 +296,9 @@ export class RadioController {
       }
     }
     try {
-      if (this.player !== undefined && this.player.state === 'playing') {
+      if (this.ffmpegPlayer !== undefined) {
+        await this.ffmpegPlayer.pause();
+      } else if (this.player !== undefined && this.player.state === 'playing') {
         await this.player.pause();
       }
     } catch (error) {
@@ -309,6 +332,10 @@ export class RadioController {
       await this.player.release();
       this.player = undefined;
     }
+    if (this.ffmpegPlayer !== undefined) {
+      await this.ffmpegPlayer.release();
+      this.ffmpegPlayer = undefined;
+    }
     this.icyRelay?.destroy();
     this.icyRelay = undefined;
     if (this.context !== undefined) {
@@ -323,6 +350,13 @@ export class RadioController {
   async resumeIfPausedAfterForeground(): Promise<void> {
     if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted ||
       this.currentStation === undefined) {
+      return;
+    }
+    if (this.ffmpegPlayer !== undefined) {
+      if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
+        return;
+      }
+      await this.ffmpegPlayer.resume();
       return;
     }
     const player = this.player;
@@ -427,8 +461,10 @@ export class RadioController {
     this.clearRecoveryTimers();
     this.buffering = true;
     const oldPlayer = this.player;
+    const oldFfmpegPlayer = this.ffmpegPlayer;
     const oldRelay = this.icyRelay;
     this.player = undefined;
+    this.ffmpegPlayer = undefined;
     this.icyRelay = undefined;
     if (oldPlayer !== undefined) {
       try {
@@ -438,7 +474,31 @@ export class RadioController {
         console.error(`旧播放器释放失败: ${businessError.message}`);
       }
     }
+    if (oldFfmpegPlayer !== undefined) {
+      await oldFfmpegPlayer.release();
+    }
     oldRelay?.destroy();
+
+    if (this.settings.ffmpegDecoder && candidate.url !== this.ffmpegFallbackUrl &&
+      FfmpegAudioPlayer.supports(candidate.url) &&
+      this.context !== undefined) {
+      const ffmpegPlayer = new FfmpegAudioPlayer({
+        onState: (state: FfmpegPlayerState, message?: string): void => {
+          this.handleFfmpegPlayerState(ffmpegPlayer, state, message);
+        }
+      });
+      this.ffmpegPlayer = ffmpegPlayer;
+      try {
+        await ffmpegPlayer.start(this.context, candidate.url);
+        return;
+      } catch (error) {
+        if (this.ffmpegPlayer === ffmpegPlayer) {
+          this.ffmpegPlayer = undefined;
+        }
+        const businessError = error as BusinessError;
+        console.error(`独立 FFmpeg 播放失败: ${businessError.message ?? '未知错误'}`);
+      }
+    }
 
     const player = await media.createAVPlayer();
     this.player = player;
@@ -568,6 +628,51 @@ export class RadioController {
     }
   }
 
+  private handleFfmpegPlayerState(
+    player: FfmpegAudioPlayer,
+    state: FfmpegPlayerState,
+    message?: string
+  ): void {
+    if (this.ffmpegPlayer !== player) {
+      return;
+    }
+    console.info(`FFmpeg 播放器状态 ${state}: ${Date.now() - this.playbackRequestedAt}ms`);
+    if (state === 'buffering') {
+      this.buffering = true;
+      this.scheduleBufferHint();
+      this.startFfmpegWatchdog(player);
+      return;
+    }
+    if (state === 'playing') {
+      this.clearWatchdog();
+      this.clearBufferHint();
+      this.buffering = false;
+      this.retryCount = 0;
+      this.isPlaying = true;
+      this.waitingForBluetooth = false;
+      this.statusText = this.currentStation?.name ?? '正在播放';
+      this.updateSessionPlaybackState(true).catch((error: BusinessError) => {
+        console.error(`更新 FFmpeg 媒体状态失败: ${error.message ?? '未知错误'}`);
+      });
+      this.notify();
+      return;
+    }
+    if (state === 'paused') {
+      this.isPlaying = false;
+      this.buffering = false;
+      this.clearBufferHint();
+      if (!this.waitingForBluetooth) {
+        this.statusText = '已暂停';
+      }
+      this.notify();
+      return;
+    }
+    if (state === 'error') {
+      this.ffmpegFallbackUrl = this.currentStation?.streamUrl ?? '';
+      this.handlePlaybackFailure(`独立 FFmpeg 播放失败：${message ?? '未知错误'}`);
+    }
+  }
+
   private handlePlaybackFailure(reason: string, failedPlayer?: media.AVPlayer): void {
     if (failedPlayer !== undefined && this.player !== failedPlayer) {
       return;
@@ -585,6 +690,13 @@ export class RadioController {
       this.player = undefined;
       brokenPlayer.release().catch((error: BusinessError) => {
         console.error(`释放故障播放器失败: ${error.message ?? '未知错误'}`);
+      });
+    }
+    const brokenFfmpeg = this.ffmpegPlayer;
+    if (brokenFfmpeg !== undefined) {
+      this.ffmpegPlayer = undefined;
+      brokenFfmpeg.release().catch((error: BusinessError) => {
+        console.error(`释放 FFmpeg 播放器失败: ${error.message ?? '未知错误'}`);
       });
     }
     this.icyRelay?.destroy();
@@ -640,6 +752,20 @@ export class RadioController {
       if (this.player === player && !this.pausedByUser && !this.audioInterrupted &&
         !this.waitingForBluetooth && (this.buffering || !this.isPlaying)) {
         this.handlePlaybackFailure('直播连接或缓冲超时', player);
+      }
+    }, this.tuning.watchdogTimeoutMs);
+  }
+
+  private startFfmpegWatchdog(player: FfmpegAudioPlayer): void {
+    this.clearWatchdog();
+    if (this.pausedByUser || this.audioInterrupted || this.waitingForBluetooth) {
+      return;
+    }
+    this.watchdogTimer = setTimeout(() => {
+      this.watchdogTimer = -1;
+      if (this.ffmpegPlayer === player && !this.pausedByUser && !this.audioInterrupted &&
+        !this.waitingForBluetooth && (this.buffering || !this.isPlaying)) {
+        this.handlePlaybackFailure('独立 FFmpeg 直播连接或缓冲超时');
       }
     }, this.tuning.watchdogTimeoutMs);
   }

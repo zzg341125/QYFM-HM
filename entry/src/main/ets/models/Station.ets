@@ -37,6 +37,7 @@ export interface AppSettings {
   pauseOnBluetoothDisconnect: boolean;
   autoPlayOnBluetoothConnect: boolean;
   icecastCompatibility: boolean;
+  ffmpegDecoder: boolean;
   lastStationId: string;
   webdavUrl: string;
   webdavUser: string;
@@ -72,6 +73,7 @@ export interface PortableSettings {
   pauseOnBluetoothDisconnect: boolean;
   autoPlayOnBluetoothConnect: boolean;
   icecastCompatibility: boolean;
+  ffmpegDecoder: boolean;
   lastStationId: string;
   webdavUrl: string;
   webdavUser: string;
@@ -102,6 +104,7 @@ export function createDefaultSettings(): AppSettings {
     pauseOnBluetoothDisconnect: true,
     autoPlayOnBluetoothConnect: true,
     icecastCompatibility: true,
+    ffmpegDecoder: true,
     lastStationId: '',
     webdavUrl: '',
     webdavUser: '',
@@ -155,6 +158,7 @@ export function copySettings(settings: AppSettings): AppSettings {
     pauseOnBluetoothDisconnect: settings.pauseOnBluetoothDisconnect,
     autoPlayOnBluetoothConnect: settings.autoPlayOnBluetoothConnect,
     icecastCompatibility: settings.icecastCompatibility,
+    ffmpegDecoder: settings.ffmpegDecoder,
     lastStationId: settings.lastStationId,
     webdavUrl: settings.webdavUrl,
     webdavUser: settings.webdavUser,

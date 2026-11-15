@@ -98,6 +98,7 @@ export class StationRepository {
         autoPlayOnBluetoothConnect:
           parsed.autoPlayOnBluetoothConnect ?? defaults.autoPlayOnBluetoothConnect,
         icecastCompatibility: parsed.icecastCompatibility ?? defaults.icecastCompatibility,
+        ffmpegDecoder: parsed.ffmpegDecoder ?? defaults.ffmpegDecoder,
         lastStationId: parsed.lastStationId ?? defaults.lastStationId,
         webdavUrl: parsed.webdavUrl ?? defaults.webdavUrl,
         webdavUser: parsed.webdavUser ?? defaults.webdavUser,
@@ -137,6 +138,7 @@ export class StationRepository {
       pauseOnBluetoothDisconnect: settings.pauseOnBluetoothDisconnect,
       autoPlayOnBluetoothConnect: settings.autoPlayOnBluetoothConnect,
       icecastCompatibility: settings.icecastCompatibility,
+      ffmpegDecoder: settings.ffmpegDecoder,
       lastStationId: settings.lastStationId,
       webdavUrl: settings.webdavUrl,
       webdavUser: settings.webdavUser,
@@ -145,7 +147,7 @@ export class StationRepository {
     const backup: StationBackup = {
       schemaVersion: BACKUP_SCHEMA_VERSION,
       app: 'QYFM HarmonyOS',
-      appVersion: '1.0.21',
+      appVersion: '1.0.23',
       exportedAt: new Date().toISOString(),
       stationOrder: stationOrder,
       stations: stations.map((station: Station) => copyStation(station)),
@@ -197,6 +199,8 @@ export class StationRepository {
         backup.settings.autoPlayOnBluetoothConnect ?? defaultSettings.autoPlayOnBluetoothConnect;
       defaultSettings.icecastCompatibility =
         backup.settings.icecastCompatibility ?? defaultSettings.icecastCompatibility;
+      defaultSettings.ffmpegDecoder =
+        backup.settings.ffmpegDecoder ?? defaultSettings.ffmpegDecoder;
       defaultSettings.lastStationId = backup.settings.lastStationId ?? defaultSettings.lastStationId;
       defaultSettings.webdavUrl = backup.settings.webdavUrl ?? defaultSettings.webdavUrl;
       defaultSettings.webdavUser = backup.settings.webdavUser ?? defaultSettings.webdavUser;

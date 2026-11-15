@@ -7,7 +7,7 @@ import {
   HttpChunkDecoder,
   HttpEndpoint,
   IcyMetadataStripper,
-  isProgressiveMp3Url,
+  isProgressiveAudioUrl,
   parseHttpEndpoint,
   parseIcyMetaint,
   parseIcyMetaintFromHeaderText
@@ -16,6 +16,8 @@ import {
 const PREPARE_TIMEOUT_MS: number = 4000;
 const PLAYBACK_POLL_MS: number = 20;
 const MAX_HEADER_BYTES: number = 64 * 1024;
+
+export type AudioChunkSink = (chunk: Uint8Array) => void;
 
 function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
   const joined = new Uint8Array(left.length + right.length);
@@ -59,6 +61,8 @@ export class IcecastStreamRelay {
   private ended: boolean = false;
   private failed: boolean = false;
   private destroyed: boolean = false;
+  private passthrough: boolean = false;
+  private dataSink: AudioChunkSink | undefined = undefined;
   private stripper: IcyMetadataStripper = new IcyMetadataStripper();
 
   private readonly socketMessageListener = (info: socket.SocketMessageInfo): void => {
@@ -75,7 +79,38 @@ export class IcecastStreamRelay {
   };
 
   static supports(url: string): boolean {
-    return isProgressiveMp3Url(url);
+    return isProgressiveAudioUrl(url);
+  }
+
+  async startStream(
+    context: common.UIAbilityContext,
+    url: string,
+    dataSink: AudioChunkSink
+  ): Promise<void> {
+    console.info(`FFmpeg 直播输入启动: ${url}`);
+    this.dataSink = dataSink;
+    this.passthrough = true;
+    const endpoint = parseHttpEndpoint(url);
+    if (endpoint !== undefined) {
+      await this.startTcpRequest(endpoint);
+    } else {
+      this.startHttpRequest(url);
+    }
+    const deadline = Date.now() + PREPARE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (this.failed) {
+        this.destroy();
+        throw new Error('FFmpeg 音频输入连接失败');
+      }
+      if (this.headerKnown) {
+        return;
+      }
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, PLAYBACK_POLL_MS);
+      });
+    }
+    this.destroy();
+    throw new Error('FFmpeg 音频输入连接超时');
   }
 
   async prepare(
@@ -186,7 +221,7 @@ export class IcecastStreamRelay {
     const request =
       `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.21 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.23 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
@@ -217,15 +252,13 @@ export class IcecastStreamRelay {
         this.pendingInput.push(chunk);
         return;
       }
-      if (this.icyMetaint > 0) {
-        this.appendCleanAudio(new Uint8Array(chunk));
-      }
+      this.appendCleanAudio(new Uint8Array(chunk));
     });
     request.on('dataEnd', (): void => {
       this.ended = true;
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.21 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.23 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };
@@ -245,7 +278,7 @@ export class IcecastStreamRelay {
   }
 
   private handleSocketMessage(chunk: ArrayBuffer): void {
-    if (this.destroyed || this.headerKnown && this.icyMetaint <= 0) {
+    if (this.destroyed) {
       return;
     }
     let data = new Uint8Array(chunk);
@@ -270,7 +303,13 @@ export class IcecastStreamRelay {
       data = this.headerBuffer.slice(boundary + 4);
       this.headerBuffer = new Uint8Array(0);
     }
-    if (data.length === 0 || this.icyMetaint <= 0) {
+    if (data.length === 0) {
+      return;
+    }
+    if (this.icyMetaint <= 0) {
+      if (this.passthrough) {
+        this.appendCleanAudio(data);
+      }
       return;
     }
     if (this.chunked) {
@@ -297,6 +336,10 @@ export class IcecastStreamRelay {
     try {
       const clean = this.stripper.strip(chunk);
       if (clean.length === 0) {
+        return;
+      }
+      if (this.dataSink !== undefined) {
+        this.dataSink(clean);
         return;
       }
       const written = fileIo.writeSync(

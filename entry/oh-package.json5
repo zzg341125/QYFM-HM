@@ -1,9 +1,11 @@
 {
   "name": "entry",
-  "version": "1.0.21",
+  "version": "1.0.23",
   "description": "Please describe the basic information.",
   "main": "",
   "author": "",
   "license": "",
-  "dependencies": {}
+  "dependencies": {
+    "libqyfm_ffmpeg.so": "file:./src/main/cpp/types/libqyfm_ffmpeg"
+  }
 }

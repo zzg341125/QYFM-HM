@@ -41,10 +41,11 @@ export function parseHttpEndpoint(url: string): HttpEndpoint | undefined {
   };
 }
 
-export function isProgressiveMp3Url(url: string): boolean {
+export function isProgressiveAudioUrl(url: string): boolean {
   const value = url.trim().toLowerCase();
   const path = value.split(/[?#]/)[0];
-  return path.endsWith('.mp3') || /[?&]\.mp3(?:&|=|$)/.test(value);
+  return path.endsWith('.mp3') || path.endsWith('.aac') ||
+    /[?&]\.(?:mp3|aac)(?:&|=|$)/.test(value);
 }
 
 function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
