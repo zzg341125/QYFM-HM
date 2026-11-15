@@ -1149,21 +1149,32 @@ struct Index {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
-
-      if (this.settings.editMode) {
-        Text('✎')
-          .width(40)
-          .height(40)
-          .textAlign(TextAlign.Center)
-          .fontSize(20)
-          .fontColor(this.palette.textPrimary)
-          .borderRadius(20)
-          .hitTestBehavior(HitTestMode.Block)
-          .onClick(() => {
+        .hitTestBehavior(HitTestMode.Block)
+        .onClick(() => {
+          if (this.settings.editMode) {
             this.closeStationSwipe();
             this.openStationEditor(station);
-          })
-      }
+          } else {
+            this.activateStation(station);
+          }
+        })
+
+      Text(this.currentStation?.id === station.id && this.isPlaying ? '■' : '▶︎')
+        .width(44)
+        .height(44)
+        .textAlign(TextAlign.Center)
+        .fontSize(this.currentStation?.id === station.id ? 18 : 22)
+        .fontColor(this.currentStation?.id === station.id
+          ? this.primaryColor()
+          : this.palette.textPrimary)
+        .hitTestBehavior(HitTestMode.Block)
+        .onClick(() => {
+          if (this.currentStation?.id === station.id) {
+            this.togglePlayback();
+          } else {
+            this.playStation(station);
+          }
+        })
 
     }
     .width('100%')
@@ -1286,11 +1297,11 @@ struct Index {
           .textAlign(TextAlign.Center)
       }
     }
-    .width('88%')
+    .width('100%')
     .padding(14)
     .borderRadius(26)
     .backgroundColor(this.palette.nowPlaying)
-    .shadow({ radius: 26, color: '#33000000', offsetY: 8 })
+    .margin({ left: 14, right: 14, bottom: 8 })
   }
 
   @Builder
@@ -1374,7 +1385,7 @@ struct Index {
     .gesture(
       LongPressGesture()
         .onAction(() => {
-          this.showSleepPanel = true;
+          this.showSleepPanel = !this.showSleepPanel;
         })
     )
   }
@@ -1399,7 +1410,7 @@ struct Index {
               if (pressed !== undefined && this.isPlaying &&
                 this.currentStation?.id === pressed.id) {
                 this.closeStationSwipe();
-                this.showSleepPanel = true;
+                this.showSleepPanel = !this.showSleepPanel;
               }
             }
           })
@@ -1414,6 +1425,9 @@ struct Index {
       .edgeEffect(EdgeEffect.Spring)
       .scrollBar(BarState.Off)
 
+      if (this.showSleepPanel) {
+        this.SleepPanel()
+      }
       this.NowPlayingBar()
     }
     .width('100%')
@@ -1690,7 +1704,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.12 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.13 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -2394,17 +2408,6 @@ struct Index {
       if (this.showTheme) {
         Column() {
           this.ThemeDialog()
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .backgroundColor('#66000000')
-      }
-
-      if (this.showSleepPanel) {
-        Column() {
-          this.SleepPanel()
         }
         .width('100%')
         .height('100%')
