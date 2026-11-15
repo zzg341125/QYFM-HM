@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import ffmpeg from 'libqyfm_ffmpeg.so';
-import { isKnownAacStreamUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
+import { inferAudioCodecFromUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
 import { IcecastStreamRelay } from './IcecastStreamRelay';
 
 export type FfmpegPlayerState = 'buffering' | 'playing' | 'paused' | 'stopped' | 'error';
@@ -14,6 +14,7 @@ export interface FfmpegPlayerCallbacks {
 export class FfmpegAudioPlayer {
   private callbacks: FfmpegPlayerCallbacks;
   private relay: IcecastStreamRelay | undefined = undefined;
+  private sourceUrl: string = '';
   private renderer: audio.AudioRenderer | undefined = undefined;
   private decoderHandle: number = -1;
   private pcmQueue: ArrayBuffer[] = [];
@@ -54,8 +55,8 @@ export class FfmpegAudioPlayer {
   async start(context: common.UIAbilityContext, url: string): Promise<void> {
     this.stopped = false;
     this.paused = false;
+    this.sourceUrl = url;
     this.callbacks.onState('buffering');
-    this.decoderHandle = ffmpeg.createDecoder(this.codecForUrl(url));
     const relay = new IcecastStreamRelay();
     this.relay = relay;
     try {
@@ -147,14 +148,20 @@ export class FfmpegAudioPlayer {
   }
 
   private codecForUrl(url: string): string {
-    return isKnownAacStreamUrl(url) ? 'aac' : 'mp3';
+    return inferAudioCodecFromUrl(url) ?? 'mp3';
   }
 
   private decodeChunk(chunk: Uint8Array): void {
-    if (this.stopped || this.decoderHandle < 0 || chunk.length === 0) {
+    if (this.stopped || chunk.length === 0) {
       return;
     }
     try {
+      if (this.decoderHandle < 0) {
+        const detectedCodec = this.relay?.detectedCodec();
+        this.decoderHandle = ffmpeg.createDecoder(
+          detectedCodec ?? this.codecForUrl(this.sourceUrl)
+        );
+      }
       const input = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
       const pcm = ffmpeg.decode(this.decoderHandle, input, false);
       if (pcm.byteLength > 0) {

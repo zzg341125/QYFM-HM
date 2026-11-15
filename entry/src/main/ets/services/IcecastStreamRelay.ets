@@ -4,10 +4,13 @@ import { fileIo } from '@kit.CoreFileKit';
 import { media } from '@kit.MediaKit';
 import { http, socket } from '@kit.NetworkKit';
 import {
+  AudioCodec,
   HttpChunkDecoder,
   HttpEndpoint,
   IcyMetadataStripper,
   isProgressiveAudioUrl,
+  parseAudioCodec,
+  parseAudioCodecFromHeaderText,
   parseHttpEndpoint,
   parseIcyMetaint,
   parseIcyMetaintFromHeaderText
@@ -54,6 +57,7 @@ export class IcecastStreamRelay {
   private written: number = 0;
   private readPosition: number = 0;
   private icyMetaint: number = 0;
+  private codec: AudioCodec | undefined = undefined;
   private headerKnown: boolean = false;
   private chunked: boolean = false;
   private headerBuffer: Uint8Array = new Uint8Array(0);
@@ -81,6 +85,10 @@ export class IcecastStreamRelay {
 
   static supports(url: string): boolean {
     return isProgressiveAudioUrl(url);
+  }
+
+  detectedCodec(): AudioCodec | undefined {
+    return this.codec;
   }
 
   async startStream(
@@ -285,6 +293,7 @@ export class IcecastStreamRelay {
       }
       this.headerKnown = true;
       this.icyMetaint = parseIcyMetaint(headers);
+      this.codec = parseAudioCodec(headers);
       this.configureStripper();
       const pending = this.pendingInput;
       this.pendingInput = [];
@@ -346,6 +355,7 @@ export class IcecastStreamRelay {
       }
       this.headerKnown = true;
       this.icyMetaint = parseIcyMetaintFromHeaderText(headerText);
+      this.codec = parseAudioCodecFromHeaderText(headerText);
       this.chunked = /transfer-encoding\s*:\s*chunked/i.test(headerText);
       this.configureStripper();
       data = this.headerBuffer.slice(boundary + 4);

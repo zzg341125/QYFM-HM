@@ -45,18 +45,65 @@ export function parseHttpEndpoint(url: string): HttpEndpoint | undefined {
   };
 }
 
-export function isKnownAacStreamUrl(url: string): boolean {
-  const value = url.trim().toLowerCase();
-  const path = value.split(/[?#]/)[0];
-  return path.endsWith('.aac') ||
-    /^https?:\/\/radiolive\.nz936\.com:8443\/fm994(?:$|[/?])/.test(value);
+export type AudioCodec = 'mp3' | 'aac';
+
+function codecFromContentType(value: string): AudioCodec | undefined {
+  const contentType = value.toLowerCase();
+  if (contentType.includes('audio/aac') || contentType.includes('audio/x-aac') ||
+    contentType.includes('audio/aacp')) {
+    return 'aac';
+  }
+  if (contentType.includes('audio/mpeg') || contentType.includes('audio/mp3') ||
+    contentType.includes('audio/x-mpeg')) {
+    return 'mp3';
+  }
+  return undefined;
+}
+
+export function parseAudioCodec(headers: Object): AudioCodec | undefined {
+  const record = headers as Record<string, Object>;
+  for (const key of Object.keys(record)) {
+    if (key.toLowerCase() === 'content-type') {
+      return codecFromContentType(String(record[key]));
+    }
+  }
+  return undefined;
+}
+
+export function parseAudioCodecFromHeaderText(headers: string): AudioCodec | undefined {
+  const match = headers.match(/(?:^|\r\n)content-type\s*:\s*([^\r\n]+)/i);
+  return match === null ? undefined : codecFromContentType(match[1]);
+}
+
+export function inferAudioCodecFromUrl(url: string): AudioCodec | undefined {
+  const path = url.trim().toLowerCase().split(/[?#]/)[0];
+  if (path.endsWith('.aac')) {
+    return 'aac';
+  }
+  if (path.endsWith('.mp3')) {
+    return 'mp3';
+  }
+  return undefined;
 }
 
 export function isProgressiveAudioUrl(url: string): boolean {
   const value = url.trim().toLowerCase();
   const path = value.split(/[?#]/)[0];
-  return path.endsWith('.mp3') || isKnownAacStreamUrl(value) ||
-    /[?&]\.(?:mp3|aac)(?:&|=|$)/.test(value);
+  if (path.endsWith('.m3u8') || path.endsWith('/hls')) {
+    return false;
+  }
+  if (path.endsWith('.mp3') || path.endsWith('.aac') ||
+    /[?&]\.(?:mp3|aac)(?:&|=|$)/.test(value)) {
+    return true;
+  }
+  const endpoint = parseHttpEndpoint(value);
+  if (endpoint === undefined) {
+    return false;
+  }
+  const lastSegment = endpoint.path.split('?')[0].split('/').filter(
+    (segment: string): boolean => segment.length > 0
+  ).pop();
+  return lastSegment !== undefined && !lastSegment.includes('.');
 }
 
 function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {

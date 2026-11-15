@@ -3,8 +3,10 @@ import test from 'node:test';
 import {
   HttpChunkDecoder,
   IcyMetadataStripper,
-  isKnownAacStreamUrl,
+  inferAudioCodecFromUrl,
   isProgressiveAudioUrl,
+  parseAudioCodec,
+  parseAudioCodecFromHeaderText,
   parseHttpEndpoint,
   parseIcyMetaint,
   parseIcyMetaintFromHeaderText
@@ -79,7 +81,22 @@ test('parses legacy HTTP Icecast endpoints and chunked response bodies', () => {
 });
 
 test('recognizes the extensionless New Zealand AAC Icecast endpoint', () => {
-  assert.equal(isKnownAacStreamUrl('http://radiolive.nz936.com:8443/fm994'), true);
+  assert.equal(inferAudioCodecFromUrl('http://radiolive.nz936.com:8443/fm994'), undefined);
   assert.equal(isProgressiveAudioUrl('http://radiolive.nz936.com:8443/fm994'), true);
-  assert.equal(isKnownAacStreamUrl('https://example.com/live/fm994'), false);
+  assert.equal(isProgressiveAudioUrl('http://radiolive.nz936.com:8443/am936'), true);
+  assert.equal(isProgressiveAudioUrl('https://example.com/live/index.m3u8'), false);
+});
+
+test('detects the decoder from the stream response instead of its URL suffix', () => {
+  assert.equal(parseAudioCodec({ 'Content-Type': 'audio/aac' }), 'aac');
+  assert.equal(parseAudioCodec({ 'content-type': 'audio/mpeg' }), 'mp3');
+  assert.equal(parseAudioCodec({ 'content-type': 'application/octet-stream' }), undefined);
+  assert.equal(
+    parseAudioCodecFromHeaderText('HTTP/1.0 200 OK\r\nContent-Type: audio/aac\r\n'),
+    'aac'
+  );
+  assert.equal(
+    parseAudioCodecFromHeaderText('HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n'),
+    'mp3'
+  );
 });
