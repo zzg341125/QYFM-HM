@@ -3,6 +3,8 @@ import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import ffmpeg from 'libqyfm_ffmpeg.so';
 import { inferAudioCodecFromUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
+import { shouldUseManagedHlsReader } from '../utils/HlsPlaylist';
+import { HlsStreamReader } from './HlsStreamReader';
 import { IcecastStreamRelay } from './IcecastStreamRelay';
 
 export type FfmpegPlayerState = 'buffering' | 'playing' | 'paused' | 'stopped' | 'error';
@@ -14,6 +16,7 @@ export interface FfmpegPlayerCallbacks {
 export class FfmpegAudioPlayer {
   private callbacks: FfmpegPlayerCallbacks;
   private relay: IcecastStreamRelay | undefined = undefined;
+  private hlsReader: HlsStreamReader | undefined = undefined;
   private sourceUrl: string = '';
   private renderer: audio.AudioRenderer | undefined = undefined;
   private decoderHandle: number = -1;
@@ -49,7 +52,7 @@ export class FfmpegAudioPlayer {
   }
 
   static supports(url: string): boolean {
-    return isProgressiveAudioUrl(url);
+    return isProgressiveAudioUrl(url) || shouldUseManagedHlsReader(url);
   }
 
   async start(context: common.UIAbilityContext, url: string): Promise<void> {
@@ -57,6 +60,20 @@ export class FfmpegAudioPlayer {
     this.paused = false;
     this.sourceUrl = url;
     this.callbacks.onState('buffering');
+    if (shouldUseManagedHlsReader(url)) {
+      const hlsReader = new HlsStreamReader();
+      this.hlsReader = hlsReader;
+      try {
+        await hlsReader.start(url, (chunk: Uint8Array): void => {
+          this.decodeChunk(chunk);
+        });
+        return;
+      } catch (error) {
+        const businessError = error as BusinessError;
+        await this.release();
+        throw new Error(businessError.message ?? 'FFmpeg HLS 输入连接失败');
+      }
+    }
     const relay = new IcecastStreamRelay();
     this.relay = relay;
     try {
@@ -106,6 +123,8 @@ export class FfmpegAudioPlayer {
     this.stopped = true;
     this.relay?.destroy();
     this.relay = undefined;
+    this.hlsReader?.destroy();
+    this.hlsReader = undefined;
     this.pcmQueue = [];
     if (this.decoderHandle >= 0) {
       ffmpeg.destroyDecoder(this.decoderHandle);
@@ -148,7 +167,8 @@ export class FfmpegAudioPlayer {
   }
 
   private codecForChunk(chunk: Uint8Array): string {
-    const detected = this.relay?.detectedCodec() ?? inferAudioCodecFromUrl(this.sourceUrl);
+    const detected = this.relay?.detectedCodec() ??
+      (this.hlsReader !== undefined ? 'aac' : inferAudioCodecFromUrl(this.sourceUrl));
     if (detected === 'aac' && chunk.length >= 2 &&
       chunk[0] === 0x56 && (chunk[1] & 0xe0) === 0xe0) {
       return 'aac_latm';
@@ -184,6 +204,7 @@ export class FfmpegAudioPlayer {
       }
     } catch (error) {
       const businessError = error as BusinessError;
+      console.error(`FFmpeg 解码分片失败: ${businessError.message ?? '未知错误'}`);
       this.callbacks.onState('error', businessError.message ?? 'FFmpeg 解码失败');
     }
   }

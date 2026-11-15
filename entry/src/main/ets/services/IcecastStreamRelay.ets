@@ -13,8 +13,10 @@ import {
   parseAudioCodecFromHeaderText,
   parseHttpEndpoint,
   parseIcyMetaint,
-  parseIcyMetaintFromHeaderText
+  parseIcyMetaintFromHeaderText,
+  parseHttpRedirectLocation
 } from '../utils/IcyMetadata';
+import { resolveHlsUrl } from '../utils/HlsPlaylist';
 
 const PREPARE_TIMEOUT_MS: number = 4000;
 const PLAYBACK_POLL_MS: number = 20;
@@ -69,6 +71,8 @@ export class IcecastStreamRelay {
   private passthrough: boolean = false;
   private dataSink: AudioChunkSink | undefined = undefined;
   private stripper: IcyMetadataStripper = new IcyMetadataStripper();
+  private sourceUrl: string = '';
+  private redirectCount: number = 0;
 
   private readonly socketMessageListener = (info: socket.SocketMessageInfo): void => {
     this.handleSocketMessage(info.message);
@@ -99,6 +103,7 @@ export class IcecastStreamRelay {
     console.info(`FFmpeg 直播输入启动: ${url}`);
     this.dataSink = dataSink;
     this.passthrough = true;
+    this.sourceUrl = url;
     const endpoint = parseHttpEndpoint(url);
     if (endpoint !== undefined) {
       if (endpoint.secure) {
@@ -132,6 +137,7 @@ export class IcecastStreamRelay {
     fastStart: boolean
   ): Promise<media.AVDataSrcDescriptor | undefined> {
     console.info(`Icecast 兼容模式检测: ${url}`);
+    this.sourceUrl = url;
     this.path = `${context.cacheDir}/qyfm-icy-${Date.now()}.mp3`;
     this.writeFd = fileIo.openSync(
       this.path,
@@ -278,7 +284,7 @@ export class IcecastStreamRelay {
   private buildRequest(endpoint: HttpEndpoint): string {
     return `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.27 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.28 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
@@ -315,7 +321,7 @@ export class IcecastStreamRelay {
       this.ended = true;
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.27 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.28 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };
@@ -349,6 +355,12 @@ export class IcecastStreamRelay {
         return;
       }
       const headerText = decodeAscii(this.headerBuffer.slice(0, boundary + 4));
+      const redirectLocation = parseHttpRedirectLocation(headerText);
+      if (redirectLocation !== undefined) {
+        this.headerBuffer = new Uint8Array(0);
+        this.followRedirect(redirectLocation);
+        return;
+      }
       if (!/^(?:HTTP\/1\.[01]|ICY) 2\d\d/i.test(headerText)) {
         this.failed = true;
         return;
@@ -387,6 +399,65 @@ export class IcecastStreamRelay {
     console.info(`Icecast 兼容流 metaint=${this.icyMetaint}`);
     if (this.icyMetaint > 0) {
       this.stripper.configure(this.icyMetaint);
+    }
+  }
+
+  private followRedirect(location: string): void {
+    if (this.redirectCount >= 5 || this.destroyed) {
+      this.failed = true;
+      return;
+    }
+    this.redirectCount++;
+    const targetUrl = resolveHlsUrl(this.sourceUrl, location);
+    this.sourceUrl = targetUrl;
+    console.info(`Icecast 跟随跳转（${this.redirectCount}）: ${targetUrl}`);
+    this.closeSocketsForRedirect()
+      .then(async (): Promise<void> => {
+        if (this.destroyed) {
+          return;
+        }
+        this.headerKnown = false;
+        this.icyMetaint = 0;
+        this.codec = undefined;
+        this.chunked = false;
+        this.ended = false;
+        this.failed = false;
+        this.headerBuffer = new Uint8Array(0);
+        this.chunkDecoder = new HttpChunkDecoder();
+        this.pendingInput = [];
+        const endpoint = parseHttpEndpoint(targetUrl);
+        if (endpoint === undefined) {
+          this.startHttpRequest(targetUrl);
+        } else if (endpoint.secure) {
+          await this.startTlsRequest(endpoint);
+        } else {
+          await this.startTcpRequest(endpoint);
+        }
+      })
+      .catch((error: BusinessError): void => {
+        console.error(`Icecast 跳转失败: ${error.message ?? '未知错误'}`);
+        this.failed = true;
+      });
+  }
+
+  private async closeSocketsForRedirect(): Promise<void> {
+    const tcp = this.tcpSocket;
+    this.tcpSocket = undefined;
+    if (tcp !== undefined) {
+      tcp.off('message', this.socketMessageListener);
+      tcp.off('close', this.socketCloseListener);
+      tcp.off('error', this.socketErrorListener);
+      await tcp.close().catch((): void => {
+      });
+    }
+    const tls = this.tlsSocket;
+    this.tlsSocket = undefined;
+    if (tls !== undefined) {
+      tls.off('message', this.socketMessageListener);
+      tls.off('close', this.socketCloseListener);
+      tls.off('error', this.socketErrorListener);
+      await tls.close().catch((): void => {
+      });
     }
   }
 

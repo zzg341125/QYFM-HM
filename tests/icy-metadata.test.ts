@@ -9,7 +9,8 @@ import {
   parseAudioCodecFromHeaderText,
   parseHttpEndpoint,
   parseIcyMetaint,
-  parseIcyMetaintFromHeaderText
+  parseIcyMetaintFromHeaderText,
+  parseHttpRedirectLocation
 } from '../entry/src/main/ets/utils/IcyMetadata.ts';
 
 test('reads icy-metaint without depending on header casing', () => {
@@ -98,5 +99,18 @@ test('detects the decoder from the stream response instead of its URL suffix', (
   assert.equal(
     parseAudioCodecFromHeaderText('HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n'),
     'mp3'
+  );
+});
+
+test('reads redirect locations from legacy HTTP radio servers', () => {
+  assert.equal(
+    parseHttpRedirectLocation(
+      'HTTP/1.1 302 Found\r\nLocation: http://n04-us1.rcs.revma.com/live?token=1\r\n\r\n'
+    ),
+    'http://n04-us1.rcs.revma.com/live?token=1'
+  );
+  assert.equal(
+    parseHttpRedirectLocation('HTTP/1.1 200 OK\r\nContent-Type: audio/aac\r\n\r\n'),
+    undefined
   );
 });

@@ -15,6 +15,15 @@ export function parseIcyMetaintFromHeaderText(headers: string): number {
   return match === null ? 0 : Math.max(0, Math.floor(Number(match[1])));
 }
 
+export function parseHttpRedirectLocation(headers: string): string | undefined {
+  if (!/^(?:HTTP\/1\.[01]|ICY)\s+3\d\d/i.test(headers)) {
+    return undefined;
+  }
+  const match = headers.match(/(?:^|\r\n)location\s*:\s*([^\r\n]+)/i);
+  const location = match === null ? '' : match[1].trim();
+  return location.length > 0 ? location : undefined;
+}
+
 export interface HttpEndpoint {
   host: string;
   port: number;

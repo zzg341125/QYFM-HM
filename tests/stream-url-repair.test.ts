@@ -24,6 +24,63 @@ test('keeps B3 on its continuous MP3 stream for Icecast cleanup', () => {
   );
 });
 
+test('migrates the retired NER host to its current official HLS entry', () => {
+  assert.equal(
+    migrateLegacyStreamUrl('https://cast.ner.gov.tw/1'),
+    'https://wowza1.ner.gov.tw/TPFM/1/playlist.m3u8'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl('http://cast.ner.gov.tw/7/?source=legacy'),
+    'https://wowza1.ner.gov.tw/TPFM/7/playlist.m3u8'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl(
+      'https://wowza1.ner.gov.tw/TPFM/1/chunklist_w513979078.m3u8'
+    ),
+    'https://wowza1.ner.gov.tw/TPFM/1/playlist.m3u8'
+  );
+});
+
+test('uses current HTTP HLS entries for Taiwan broadcasters', () => {
+  assert.equal(
+    migrateLegacyStreamUrl(
+      'https://stream.ginnet.cloud/live0130lo-yfyo/_definst_/fm/chunklist_w999572124.m3u8'
+    ),
+    'http://stream.ginnet.cloud/live0130lo-yfyo/_definst_/fm/playlist.m3u8'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl(
+      'https://flv.ccdntech.com/live/_definst_/mp4:vod117_Live/live1/chunklist_w872521607.m3u8'
+    ),
+    'http://flv.ccdntech.com/live/_definst_/mp4:vod117_Live/live1/chunklist.m3u8'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl(
+      'https://streamak0138.akamaized.net/live0138lh-mbm9/_definst_/rti3/chunklist.m3u8'
+    ),
+    'http://streamak0138.akamaized.net/live0138lh-mbm9/_definst_/rti3/chunklist.m3u8'
+  );
+});
+
+test('moves regional Revma links to the stable HTTP routing host', () => {
+  assert.equal(
+    migrateLegacyStreamUrl(
+      'https://n36a-eu.rcs.revma.com/xpgtqc74hv8uv?rj-ttl=5&rj-tok=expired'
+    ),
+    'http://n13.rcs.revma.com/xpgtqc74hv8uv'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl(
+      'https://n14a-eu.rcs.revma.com/e0tdah74hv8uv?rj-ttl=5&rj-tok=expired'
+    ),
+    'http://n13.rcs.revma.com/e0tdah74hv8uv'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl('https://n03-us1.rcs.revma.com/xpgtqc74hv8uv'),
+    'http://n13.rcs.revma.com/xpgtqc74hv8uv'
+  );
+});
+
 test('uses the generic HTTP transport for Qingting MP3 streams', () => {
   assert.equal(
     migrateLegacyStreamUrl('https://lhttp.qtfm.cn/live/20500149/64k.mp3'),

@@ -166,6 +166,9 @@ bool SendPacket(FfmpegDecoder *decoder, std::vector<uint8_t> &pcm)
         av_packet_unref(decoder->packet);
         if (ret < 0) {
             decoder->lastError = ret;
+            if (ret == AVERROR_INVALIDDATA) {
+                return true;
+            }
             return false;
         }
         return ReceiveFrames(decoder, pcm);
