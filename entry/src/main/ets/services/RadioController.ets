@@ -36,7 +36,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.19 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.20 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -66,12 +66,14 @@ export class RadioController {
   private sleepTimer: number = -1;
   private retryTimer: number = -1;
   private watchdogTimer: number = -1;
+  private bufferHintTimer: number = -1;
   private retryCount: number = 0;
   private candidatePosition: number = 0;
   private playRequestId: number = 0;
   private currentCandidates: PlaybackCandidate[] = [];
   private buffering: boolean = false;
   private audioInterrupted: boolean = false;
+  private playbackRequestedAt: number = 0;
   private tuning: LivePlaybackTuning = buildLivePlaybackTuning(true);
   private backgroundTasks: BackgroundTaskService = new BackgroundTaskService();
   private silentKeepAlive: SilentAudioKeepAlive = new SilentAudioKeepAlive();
@@ -157,6 +159,8 @@ export class RadioController {
   }
 
   async playStation(station: Station): Promise<void> {
+    this.playbackRequestedAt = Date.now();
+    console.info(`起播计时开始: ${station.name}`);
     const context = this.context;
     if (context === undefined) {
       this.statusText = '应用尚未完成初始化';
@@ -184,6 +188,7 @@ export class RadioController {
     this.notify();
     const migratedStation = this.migrateLegacyStation(station);
     const resolvedStation = await this.radioCnResolver.resolve(migratedStation);
+    console.info(`线路解析完成: ${Date.now() - this.playbackRequestedAt}ms`);
     if (requestId !== this.playRequestId) {
       return;
     }
@@ -457,12 +462,14 @@ export class RadioController {
         return;
       }
       if (infoType === media.BufferingInfoType.BUFFERING_START) {
+        console.info(`直播缓冲开始: ${Date.now() - this.playbackRequestedAt}ms`);
         this.buffering = true;
-        this.statusText = '直播缓冲中，正在优化起播';
+        this.scheduleBufferHint();
         this.startWatchdog(player);
-        this.notify();
       } else if (infoType === media.BufferingInfoType.BUFFERING_END) {
+        console.info(`直播缓冲结束: ${Date.now() - this.playbackRequestedAt}ms`);
         this.buffering = false;
+        this.clearBufferHint();
         this.clearWatchdog();
       }
     });
@@ -511,6 +518,7 @@ export class RadioController {
   }
 
   private async handlePlayerState(player: media.AVPlayer, state: string): Promise<void> {
+    console.info(`播放器状态 ${state}: ${Date.now() - this.playbackRequestedAt}ms`);
     if (state === 'initialized') {
       player.audioRendererInfo = {
         usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
@@ -529,6 +537,7 @@ export class RadioController {
       this.startWatchdog(player);
     } else if (state === 'playing') {
       this.clearWatchdog();
+      this.clearBufferHint();
       this.buffering = false;
       this.retryCount = 0;
       this.isPlaying = true;
@@ -538,6 +547,7 @@ export class RadioController {
       this.notify();
     } else if (state === 'paused') {
       this.isPlaying = false;
+      this.clearBufferHint();
       this.buffering = false;
       if (!this.waitingForBluetooth) {
         this.statusText = this.audioInterrupted ? '音频暂时被其他应用占用' : '已暂停';
@@ -546,6 +556,7 @@ export class RadioController {
       this.notify();
     } else if (state === 'completed' || state === 'stopped') {
       this.isPlaying = false;
+      this.clearBufferHint();
       this.buffering = false;
       await this.updateSessionPlaybackState(false);
       if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
@@ -640,8 +651,29 @@ export class RadioController {
     }
   }
 
+  private scheduleBufferHint(): void {
+    if (this.bufferHintTimer >= 0) {
+      return;
+    }
+    this.bufferHintTimer = setTimeout(() => {
+      this.bufferHintTimer = -1;
+      if (this.buffering && !this.isPlaying) {
+        this.statusText = '直播缓冲中，正在优化起播';
+        this.notify();
+      }
+    }, 800);
+  }
+
+  private clearBufferHint(): void {
+    if (this.bufferHintTimer >= 0) {
+      clearTimeout(this.bufferHintTimer);
+      this.bufferHintTimer = -1;
+    }
+  }
+
   private clearRecoveryTimers(): void {
     this.clearWatchdog();
+    this.clearBufferHint();
     if (this.retryTimer >= 0) {
       clearTimeout(this.retryTimer);
       this.retryTimer = -1;

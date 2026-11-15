@@ -13,14 +13,14 @@ test('migrates retired NZ 936 stream hosts without changing the channel path', (
   );
 });
 
-test('migrates B3 legacy MP3 to the stable HTTPS HLS stream', () => {
+test('keeps B3 on its continuous MP3 stream for Icecast cleanup', () => {
   assert.equal(
     migrateLegacyStreamUrl('http://lhttp.qingting.fm/live/4915/64k.mp3'),
-    'https://ls.qingting.fm/live/4915.m3u8?bitrate=64'
+    'http://lhttp.qingting.fm/live/4915/64k.mp3'
   );
   assert.equal(
     migrateLegacyStreamUrl('https://lhttp.qtfm.cn/live/4915/64k.mp3?app_id=web'),
-    'https://ls.qingting.fm/live/4915.m3u8?bitrate=64'
+    'https://lhttp.qtfm.cn/live/4915/64k.mp3?app_id=web'
   );
 });
 

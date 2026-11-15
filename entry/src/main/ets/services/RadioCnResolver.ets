@@ -125,8 +125,8 @@ export class RadioCnResolver {
       const response = await request.request(url, {
         method: http.RequestMethod.GET,
         header: new RadioCnRequestHeaders(sign, timestamp),
-        connectTimeout: 6000,
-        readTimeout: 10000,
+        connectTimeout: 1000,
+        readTimeout: 1500,
         expectDataType: http.HttpDataType.STRING,
         usingCache: false
       });

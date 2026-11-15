@@ -13,8 +13,8 @@ import {
   parseIcyMetaintFromHeaderText
 } from '../utils/IcyMetadata';
 
-const PREPARE_TIMEOUT_MS: number = 8000;
-const PLAYBACK_POLL_MS: number = 40;
+const PREPARE_TIMEOUT_MS: number = 4000;
+const PLAYBACK_POLL_MS: number = 20;
 const MAX_HEADER_BYTES: number = 64 * 1024;
 
 function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
@@ -96,7 +96,7 @@ export class IcecastStreamRelay {
       this.startHttpRequest(url);
     }
 
-    const minimumPrebuffer = fastStart ? 8192 : 32768;
+    const minimumPrebuffer = fastStart ? 4096 : 16384;
     const deadline = Date.now() + PREPARE_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (this.failed) {
@@ -186,7 +186,7 @@ export class IcecastStreamRelay {
     const request =
       `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.19 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.20 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
@@ -225,7 +225,7 @@ export class IcecastStreamRelay {
       this.ended = true;
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.19 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.20 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };

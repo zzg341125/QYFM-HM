@@ -145,7 +145,7 @@ export class StationRepository {
     const backup: StationBackup = {
       schemaVersion: BACKUP_SCHEMA_VERSION,
       app: 'QYFM HarmonyOS',
-      appVersion: '1.0.19',
+      appVersion: '1.0.20',
       exportedAt: new Date().toISOString(),
       stationOrder: stationOrder,
       stations: stations.map((station: Station) => copyStation(station)),
