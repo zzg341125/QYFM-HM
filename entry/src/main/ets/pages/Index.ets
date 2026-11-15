@@ -1851,7 +1851,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.24 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.25 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

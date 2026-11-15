@@ -5,7 +5,8 @@ import {
   buildPlaybackCandidates,
   audioInterruptAction,
   shouldAutoPlayOnBluetoothConnect,
-  shouldResumeAfterForeground
+  shouldResumeAfterForeground,
+  shouldUseDirectPlayer
 } from '../entry/src/main/ets/utils/PlaybackRecovery.ts';
 
 test('uses fast start with segment-safe buffering and watchdog timing', () => {
@@ -81,4 +82,23 @@ test('starts the remembered station on Bluetooth connect only when playback is i
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, true, false, true), false);
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, true, true), false);
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, false, false), false);
+});
+
+test('routes Qingting HTTPS MP3 through the direct player path', () => {
+  assert.equal(
+    shouldUseDirectPlayer('https://lhttp.qtfm.cn/live/20500149/64k.mp3'),
+    true
+  );
+  assert.equal(
+    shouldUseDirectPlayer('https://lhttp-hw.qtfm.cn/live/20500149/64k.mp3'),
+    true
+  );
+  assert.equal(
+    shouldUseDirectPlayer('http://lhttp.qingting.fm/live/4915/64k.mp3'),
+    false
+  );
+  assert.equal(
+    shouldUseDirectPlayer('https://example.com/live/radio.mp3'),
+    false
+  );
 });
