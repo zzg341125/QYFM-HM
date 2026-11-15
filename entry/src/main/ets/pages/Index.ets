@@ -5,7 +5,8 @@ import {
   copyStation,
   copySettings,
   createDefaultSettings,
-  Station
+  Station,
+  StreamLine
 } from '../models/Station';
 import { StationRepository } from '../data/StationRepository';
 import { RadioController, RadioSnapshot, RadioStateListener } from '../services/RadioController';
@@ -203,10 +204,36 @@ struct Index {
       return;
     }
     const existing = this.stations.find((station: Station) => station.id === this.editorId);
+    const existingLines = existing?.streamLines?.map((line: StreamLine): StreamLine => {
+      return {
+        id: line.id,
+        name: line.name,
+        url: line.url,
+        priority: line.priority,
+        isStable: line.isStable
+      };
+    }) ?? [];
+    const requestedLineIndex = existing?.activeLineIndex ?? 0;
+    const activeLineIndex = existingLines.length > 0
+      ? Math.max(0, Math.min(requestedLineIndex, existingLines.length - 1))
+      : 0;
+    if (existingLines.length === 0) {
+      existingLines.push({
+        id: 'default',
+        name: '自定义主线',
+        url: url,
+        priority: 1,
+        isStable: false
+      });
+    } else {
+      existingLines[activeLineIndex].url = url;
+    }
     const nextStation: Station = {
       id: this.editorId,
       name: name,
       streamUrl: url,
+      streamLines: existingLines,
+      activeLineIndex: activeLineIndex,
       iconUrl: this.editorIcon,
       tags: this.editorTags.trim(),
       country: existing?.country ?? '自定义',
@@ -892,6 +919,8 @@ struct Index {
         id: station.id,
         name: station.name,
         streamUrl: station.streamUrl,
+        streamLines: station.streamLines,
+        activeLineIndex: station.activeLineIndex,
         iconUrl: station.iconUrl,
         tags: station.tags,
         country: station.country,
@@ -1665,10 +1694,12 @@ struct Index {
           this.SettingsSectionTitle('高级')
         }
         ListItem() {
-          this.SettingsSwitchRow('ϟ', '0.25s 极速起播优化', '使用快速起播缓冲，重启应用后生效。', 'fastStart')
-        }
-        ListItem() {
-          this.SettingsSwitchRow('▤', '使用更大缓冲', '使用更大的直播缓冲，重启应用后生效。', 'largeBuffer')
+          this.SettingsSwitchRow(
+            'ϟ',
+            '0.25s 极速起播优化',
+            '采用 LX-FM 的低水位起播策略，下次切台立即生效。',
+            'fastStart'
+          )
         }
         ListItem() {
           this.SettingsSwitchRow('✎', '编辑电台', '开启后显示编辑按钮，并支持拖动排序或左滑删除。', 'editMode')
@@ -1704,7 +1735,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.13 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.14 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

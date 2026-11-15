@@ -3,13 +3,17 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { media } from '@kit.MediaKit';
 import { avSession } from '@kit.AVSessionKit';
 import { audio } from '@kit.AudioKit';
-import { AppSettings, createDefaultSettings, Station } from '../models/Station';
+import { AppSettings, createDefaultSettings, Station, StreamLine } from '../models/Station';
 import { BackgroundTaskService } from './BackgroundTaskService';
 import { BluetoothResumeCallbacks, BluetoothResumeManager } from './BluetoothResumeManager';
 import { SilentAudioKeepAlive } from './SilentAudioKeepAlive';
 import {
+  audioInterruptAction,
+  AudioInterruptAction,
   buildLivePlaybackTuning,
-  recoveryDelayMs,
+  buildPlaybackCandidates,
+  PlaybackCandidate,
+  LivePlaybackTuning,
   shouldResumeAfterForeground
 } from '../utils/PlaybackRecovery';
 
@@ -27,6 +31,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.14 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -52,8 +57,14 @@ export class RadioController {
   private sleepTimerMinutes: number = 0;
   private sleepTimerEndAt: number = 0;
   private sleepTimer: number = -1;
-  private reconnectTimer: number = -1;
-  private reconnectAttempt: number = 0;
+  private retryTimer: number = -1;
+  private watchdogTimer: number = -1;
+  private retryCount: number = 0;
+  private candidatePosition: number = 0;
+  private currentCandidates: PlaybackCandidate[] = [];
+  private buffering: boolean = false;
+  private audioInterrupted: boolean = false;
+  private tuning: LivePlaybackTuning = buildLivePlaybackTuning(true);
   private backgroundTasks: BackgroundTaskService = new BackgroundTaskService();
   private silentKeepAlive: SilentAudioKeepAlive = new SilentAudioKeepAlive();
   private bluetooth: BluetoothResumeManager;
@@ -103,6 +114,7 @@ export class RadioController {
 
   async applySettings(settings: AppSettings): Promise<void> {
     this.settings = settings;
+    this.tuning = buildLivePlaybackTuning(settings.fastStart);
     this.bluetooth.setResumeWindowMinutes(settings.resumeWindowMinutes);
     if (settings.autoResume) {
       this.bluetooth.start();
@@ -146,27 +158,34 @@ export class RadioController {
     }
     this.waitingForBluetooth = false;
     this.pausedByUser = false;
-    this.clearReconnect();
-    this.reconnectAttempt = 0;
+    this.audioInterrupted = false;
+    this.clearRecoveryTimers();
+    this.retryCount = 0;
+    this.candidatePosition = 0;
+    this.currentCandidates = buildPlaybackCandidates(station);
+    this.tuning = buildLivePlaybackTuning(this.settings.fastStart);
     this.bluetooth.cancelPending();
     await this.silentKeepAlive.stop();
     this.currentStation = station;
-    this.statusText = `正在连接 ${station.name}`;
     this.isPlaying = false;
+    if (this.currentCandidates.length === 0) {
+      this.statusText = '该电台暂无有效音频直播流';
+      this.notify();
+      return;
+    }
+    this.statusText = `正在连接 ${station.name} · ${this.currentCandidates[0].name}`;
     this.notify();
     try {
       await this.ensureSession();
       await this.updateSessionMetadata(station);
-      await this.replacePlayer(station.streamUrl);
       await this.backgroundTasks.start(context);
       if (this.settings.autoResume) {
         this.bluetooth.setPlaybackActive(true);
       }
+      await this.startCandidate(this.currentCandidates[0], false);
     } catch (error) {
       const businessError = error as BusinessError;
-      this.isPlaying = false;
-      this.statusText = `播放失败：${businessError.message ?? '未知错误'}`;
-      this.notify();
+      this.handlePlaybackFailure(`播放失败：${businessError.message ?? '未知错误'}`);
     }
   }
 
@@ -188,7 +207,7 @@ export class RadioController {
       return;
     }
     const player = this.player;
-    this.clearReconnect();
+    this.clearRecoveryTimers();
     if (player === undefined || (player.state !== 'paused' && player.state !== 'prepared')) {
       await this.playStation(this.currentStation);
       return;
@@ -196,8 +215,10 @@ export class RadioController {
     try {
       this.waitingForBluetooth = false;
       this.pausedByUser = false;
+      this.audioInterrupted = false;
       await this.silentKeepAlive.stop();
       await player.play();
+      this.startWatchdog(player);
       this.statusText = reason;
       this.notify();
     } catch (error) {
@@ -208,9 +229,10 @@ export class RadioController {
   }
 
   async pause(reason: string, manual: boolean): Promise<void> {
-    this.clearReconnect();
+    this.clearRecoveryTimers();
     if (manual) {
       this.pausedByUser = true;
+      this.audioInterrupted = false;
       this.bluetooth.cancelPending();
       this.bluetooth.setPlaybackActive(false);
       await this.silentKeepAlive.stop();
@@ -234,8 +256,11 @@ export class RadioController {
 
   async stop(): Promise<void> {
     this.pausedByUser = true;
-    this.clearReconnect();
-    this.reconnectAttempt = 0;
+    this.audioInterrupted = false;
+    this.clearRecoveryTimers();
+    this.retryCount = 0;
+    this.candidatePosition = 0;
+    this.currentCandidates = [];
     this.bluetooth.cancelPending();
     this.bluetooth.setPlaybackActive(false);
     await this.silentKeepAlive.stop();
@@ -259,7 +284,8 @@ export class RadioController {
   }
 
   async resumeIfPausedAfterForeground(): Promise<void> {
-    if (this.pausedByUser || this.waitingForBluetooth || this.currentStation === undefined) {
+    if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted ||
+      this.currentStation === undefined) {
       return;
     }
     const player = this.player;
@@ -272,7 +298,7 @@ export class RadioController {
       return;
     }
     this.statusText = '返回前台，正在恢复直播';
-    await this.recoverStream();
+    await this.playStation(this.currentStation);
   }
 
   setSleepTimer(minutes: number): void {
@@ -300,7 +326,44 @@ export class RadioController {
     this.notify();
   }
 
-  private async replacePlayer(url: string): Promise<void> {
+  private async startCandidate(candidate: PlaybackCandidate, isRetry: boolean): Promise<void> {
+    const station = this.currentStation;
+    if (station === undefined) {
+      return;
+    }
+    const lines: StreamLine[] | undefined = station.streamLines?.map((line: StreamLine): StreamLine => {
+      return {
+        id: line.id,
+        name: line.name,
+        url: line.url,
+        priority: line.priority,
+        isStable: line.isStable
+      };
+    });
+    const nextStation: Station = {
+      id: station.id,
+      name: station.name,
+      streamUrl: candidate.url,
+      streamLines: lines,
+      activeLineIndex: candidate.lineIndex,
+      iconUrl: station.iconUrl,
+      tags: station.tags,
+      country: station.country,
+      state: station.state,
+      favorite: station.favorite
+    };
+    this.currentStation = nextStation;
+    await this.updateSessionMetadata(nextStation);
+    await this.replacePlayer(candidate);
+    if (!isRetry) {
+      this.statusText = `正在连接 ${station.name} · ${candidate.name}`;
+      this.notify();
+    }
+  }
+
+  private async replacePlayer(candidate: PlaybackCandidate): Promise<void> {
+    this.clearRecoveryTimers();
+    this.buffering = true;
     const oldPlayer = this.player;
     this.player = undefined;
     if (oldPlayer !== undefined) {
@@ -327,10 +390,36 @@ export class RadioController {
       if (this.player !== player) {
         return;
       }
-      this.isPlaying = false;
-      this.scheduleStreamRecovery(`播放器错误：${error.message}`);
+      this.handlePlaybackFailure(`播放器错误：${error.message ?? '未知错误'}`, player);
     });
-    player.url = url;
+    player.on('bufferingUpdate', (infoType: media.BufferingInfoType) => {
+      if (this.player !== player) {
+        return;
+      }
+      if (infoType === media.BufferingInfoType.BUFFERING_START) {
+        this.buffering = true;
+        this.statusText = '直播缓冲中，正在优化起播';
+        this.startWatchdog(player);
+        this.notify();
+      } else if (infoType === media.BufferingInfoType.BUFFERING_END) {
+        this.buffering = false;
+        this.clearWatchdog();
+      }
+    });
+    player.on('audioInterrupt', (event: audio.InterruptEvent) => {
+      if (this.player !== player) {
+        return;
+      }
+      this.handleAudioInterrupt(event);
+    });
+    const headers: Record<string, string> = {
+      'User-Agent': LIVE_USER_AGENT,
+      'Icy-MetaData': '1',
+      'Accept': '*/*'
+    };
+    const source = media.createMediaSourceWithUrl(candidate.url, headers);
+    await player.setMediaSource(source);
+    this.startWatchdog(player);
   }
 
   private async handlePlayerState(player: media.AVPlayer, state: string): Promise<void> {
@@ -339,19 +428,21 @@ export class RadioController {
         usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
         rendererFlags: 0
       };
-      const tuning = buildLivePlaybackTuning(this.settings.fastStart, this.settings.largeBuffer);
       const strategy: media.PlaybackStrategy = {
-        preferredBufferDuration: tuning.preferredBufferDuration,
-        preferredBufferDurationForPlaying: tuning.preferredBufferDurationForPlaying,
-        thresholdForAutoQuickPlay: tuning.thresholdForAutoQuickPlay
+        preferredBufferDuration: this.tuning.preferredBufferDuration,
+        preferredBufferDurationForPlaying: this.tuning.preferredBufferDurationForPlaying,
+        thresholdForAutoQuickPlay: this.tuning.thresholdForAutoQuickPlay
       };
-      player.setPlaybackStrategy(strategy);
+      await player.setPlaybackStrategy(strategy);
       await player.prepare();
     } else if (state === 'prepared') {
+      player.audioInterruptMode = audio.InterruptMode.SHARE_MODE;
       await player.play();
+      this.startWatchdog(player);
     } else if (state === 'playing') {
-      this.clearReconnect();
-      this.reconnectAttempt = 0;
+      this.clearWatchdog();
+      this.buffering = false;
+      this.retryCount = 0;
       this.isPlaying = true;
       this.waitingForBluetooth = false;
       this.statusText = this.currentStation?.name ?? '正在播放';
@@ -359,64 +450,155 @@ export class RadioController {
       this.notify();
     } else if (state === 'paused') {
       this.isPlaying = false;
+      this.buffering = false;
       if (!this.waitingForBluetooth) {
-        this.statusText = '已暂停';
+        this.statusText = this.audioInterrupted ? '音频暂时被其他应用占用' : '已暂停';
       }
       await this.updateSessionPlaybackState(false);
       this.notify();
     } else if (state === 'completed' || state === 'stopped') {
       this.isPlaying = false;
-      this.statusText = this.pausedByUser ? '播放已停止' : '直播流已中断，准备自动恢复';
+      this.buffering = false;
       await this.updateSessionPlaybackState(false);
-      this.notify();
-      this.scheduleStreamRecovery('直播流已中断');
+      if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
+        this.statusText = this.pausedByUser ? '播放已停止' : '等待音频恢复';
+        this.notify();
+        return;
+      }
+      this.handlePlaybackFailure('直播流已中断', player);
     }
   }
 
-  private clearReconnect(): void {
-    if (this.reconnectTimer >= 0) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = -1;
+  private handlePlaybackFailure(reason: string, failedPlayer?: media.AVPlayer): void {
+    if (failedPlayer !== undefined && this.player !== failedPlayer) {
+      return;
     }
-  }
-
-  private scheduleStreamRecovery(reason: string): void {
-    if (this.pausedByUser || this.waitingForBluetooth || this.currentStation === undefined ||
-      this.reconnectTimer >= 0) {
+    if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted ||
+      this.currentStation === undefined || this.currentCandidates.length === 0) {
       this.notify();
       return;
     }
-    const delay = recoveryDelayMs(this.reconnectAttempt);
-    const seconds = Math.round(delay / 1000);
-    this.statusText = `${reason}，${seconds} 秒后自动重连`;
-    this.notify();
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = -1;
-      this.recoverStream().catch((error: BusinessError) => {
-        this.statusText = `自动恢复失败：${error.message ?? '未知错误'}`;
-        this.scheduleStreamRecovery('自动恢复失败');
-      });
-    }, delay);
-  }
-
-  private async recoverStream(): Promise<void> {
-    if (this.pausedByUser || this.waitingForBluetooth || this.currentStation === undefined ||
-      this.context === undefined) {
-      return;
-    }
-    this.reconnectAttempt++;
+    this.clearRecoveryTimers();
+    this.buffering = false;
     this.isPlaying = false;
-    this.statusText = `正在自动恢复 ${this.currentStation.name}（第 ${this.reconnectAttempt} 次）`;
+    const brokenPlayer = failedPlayer ?? this.player;
+    if (brokenPlayer !== undefined && this.player === brokenPlayer) {
+      this.player = undefined;
+      brokenPlayer.release().catch((error: BusinessError) => {
+        console.error(`释放故障播放器失败: ${error.message ?? '未知错误'}`);
+      });
+    }
+    this.updateSessionPlaybackState(false).catch((error: BusinessError) => {
+      console.error(`更新媒体暂停状态失败: ${error.message}`);
+    });
+
+    const nextPosition = this.candidatePosition + 1;
+    if (nextPosition < this.currentCandidates.length) {
+      this.candidatePosition = nextPosition;
+      const next = this.currentCandidates[nextPosition];
+      this.statusText = `正在无感切换备用线路：${next.name}`;
+      this.notify();
+      this.startCandidate(next, true).catch((error: BusinessError) => {
+        this.handlePlaybackFailure(`备用线路连接失败：${error.message ?? '未知错误'}`);
+      });
+      return;
+    }
+
+    if (this.retryCount < this.tuning.maxAutoRetries) {
+      this.retryCount++;
+      const current = this.currentCandidates[this.candidatePosition];
+      this.statusText =
+        `正在刷新直播线路（${this.retryCount}/${this.tuning.maxAutoRetries}）：${current.name}`;
+      this.notify();
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = -1;
+        this.startCandidate(current, true).catch((error: BusinessError) => {
+          this.handlePlaybackFailure(`自动恢复失败：${error.message ?? '未知错误'}`);
+        });
+      }, this.tuning.refreshRetryDelayMs);
+      return;
+    }
+
+    this.statusText = `${reason}；该电台暂时无法连接，可点击重试或切换其他频道`;
     this.notify();
+    this.bluetooth.setPlaybackActive(false);
+    if (this.context !== undefined) {
+      this.backgroundTasks.stop(this.context).catch((error: BusinessError) => {
+        console.error(`停止播放长时任务失败: ${error.message ?? '未知错误'}`);
+      });
+    }
+  }
+
+  private startWatchdog(player: media.AVPlayer): void {
+    this.clearWatchdog();
+    if (this.pausedByUser || this.audioInterrupted || this.waitingForBluetooth) {
+      return;
+    }
+    this.watchdogTimer = setTimeout(() => {
+      this.watchdogTimer = -1;
+      if (this.player === player && !this.pausedByUser && !this.audioInterrupted &&
+        !this.waitingForBluetooth && (this.buffering || !this.isPlaying)) {
+        this.handlePlaybackFailure('直播连接或缓冲超时', player);
+      }
+    }, this.tuning.watchdogTimeoutMs);
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdogTimer >= 0) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = -1;
+    }
+  }
+
+  private clearRecoveryTimers(): void {
+    this.clearWatchdog();
+    if (this.retryTimer >= 0) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = -1;
+    }
+  }
+
+  private handleAudioInterrupt(event: audio.InterruptEvent): void {
+    const eventType = event.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN ? 'begin' : 'end';
+    let hint: 'resume' | 'pause' | 'stop' | 'duck' | 'unduck' = 'unduck';
+    if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_RESUME) {
+      hint = 'resume';
+    } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_PAUSE) {
+      hint = 'pause';
+    } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_STOP) {
+      hint = 'stop';
+    } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK) {
+      hint = 'duck';
+    }
+    const action: AudioInterruptAction = audioInterruptAction(eventType, hint, this.pausedByUser);
+    if (action === 'pause') {
+      this.audioInterrupted = true;
+      this.pauseForAudioInterruption().catch((error: BusinessError) => {
+        console.error(`处理音频中断失败: ${error.message}`);
+      });
+    } else if (action === 'resume' && this.audioInterrupted) {
+      this.resume('音频中断结束，继续播放').catch((error: BusinessError) => {
+        console.error(`音频中断后恢复失败: ${error.message}`);
+      });
+    }
+  }
+
+  private async pauseForAudioInterruption(): Promise<void> {
+    this.buffering = false;
+    this.isPlaying = false;
+    this.clearWatchdog();
+    const player = this.player;
     try {
-      await this.replacePlayer(this.currentStation.streamUrl);
-      await this.backgroundTasks.start(this.context);
+      if (player !== undefined && player.state === 'playing') {
+        await player.pause();
+      }
     } catch (error) {
       const businessError = error as BusinessError;
-      this.statusText = `直播恢复失败：${businessError.message ?? '未知错误'}`;
-      this.notify();
-      this.scheduleStreamRecovery('直播恢复失败');
+      console.error(`音频中断暂停失败: ${businessError.message}`);
     }
+    await this.updateSessionPlaybackState(false);
+    this.statusText = '音频暂时被其他应用占用，中断结束后自动续播';
+    this.notify();
   }
 
   private async ensureSession(): Promise<void> {

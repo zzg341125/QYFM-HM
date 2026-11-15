@@ -2,22 +2,85 @@ export interface LivePlaybackTuning {
   preferredBufferDuration: number;
   preferredBufferDurationForPlaying: number;
   thresholdForAutoQuickPlay: number;
+  watchdogTimeoutMs: number;
+  maxAutoRetries: number;
+  refreshRetryDelayMs: number;
 }
 
-export function recoveryDelayMs(attempt: number): number {
-  if (attempt <= 0) {
-    return 1000;
-  }
-  return Math.min(30000, 1000 * Math.pow(2, attempt));
+export interface PlaybackLineSource {
+  id?: string;
+  name?: string;
+  url: string;
 }
 
-export function buildLivePlaybackTuning(fastStart: boolean, largeBuffer: boolean): LivePlaybackTuning {
-  const startWaterline = fastStart ? 3 : 5;
+export interface PlaybackStationSource {
+  streamUrl: string;
+  streamLines?: PlaybackLineSource[];
+  activeLineIndex?: number;
+}
+
+export interface PlaybackCandidate {
+  url: string;
+  lineIndex: number;
+  name: string;
+}
+
+export function buildLivePlaybackTuning(fastStart: boolean): LivePlaybackTuning {
+  const startWaterline = fastStart ? 0.25 : 0.8;
   return {
-    preferredBufferDuration: largeBuffer ? 45 : 20,
+    preferredBufferDuration: 5,
     preferredBufferDurationForPlaying: startWaterline,
-    thresholdForAutoQuickPlay: startWaterline + 4
+    thresholdForAutoQuickPlay: startWaterline + 2,
+    watchdogTimeoutMs: 6500,
+    maxAutoRetries: 2,
+    refreshRetryDelayMs: 600
   };
+}
+
+export function buildPlaybackCandidates(station: PlaybackStationSource): PlaybackCandidate[] {
+  const lines = Array.isArray(station.streamLines) ? station.streamLines : [];
+  if (lines.length === 0) {
+    const fallbackUrl = station.streamUrl.trim();
+    return fallbackUrl.length === 0
+      ? []
+      : [{ url: fallbackUrl, lineIndex: 0, name: '默认主线' }];
+  }
+  const requestedIndex = station.activeLineIndex ?? 0;
+  const activeIndex = Math.max(0, Math.min(requestedIndex, lines.length - 1));
+  const seen = new Set<string>();
+  const candidates: PlaybackCandidate[] = [];
+  for (let index = activeIndex; index < lines.length; index++) {
+    const line = lines[index];
+    const url = typeof line.url === 'string' ? line.url.trim() : '';
+    if (url.length === 0 || seen.has(url)) {
+      continue;
+    }
+    seen.add(url);
+    const name = typeof line.name === 'string' && line.name.trim().length > 0
+      ? line.name.trim()
+      : `线路 ${index + 1}`;
+    candidates.push({ url: url, lineIndex: index, name: name });
+  }
+  return candidates;
+}
+
+export type AudioInterruptAction = 'pause' | 'resume' | 'none';
+
+export function audioInterruptAction(
+  eventType: 'begin' | 'end',
+  hint: 'resume' | 'pause' | 'stop' | 'duck' | 'unduck',
+  pausedByUser: boolean
+): AudioInterruptAction {
+  if (pausedByUser) {
+    return 'none';
+  }
+  if (eventType === 'begin' && (hint === 'pause' || hint === 'stop')) {
+    return 'pause';
+  }
+  if (eventType === 'end' && hint === 'resume') {
+    return 'resume';
+  }
+  return 'none';
 }
 
 export function shouldResumeAfterForeground(

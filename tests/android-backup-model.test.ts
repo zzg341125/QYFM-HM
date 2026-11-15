@@ -18,8 +18,12 @@ test('restores Android v1.0.8 playlist data, logo references, order and settings
         state: '河北',
         tags: '新闻',
         isFavorite: true,
-        lines: [{ url: 'https://active.example/a.m3u8' }],
-        activeLineIndex: 0
+        lines: [
+          { lineId: 'news-primary', name: '官方专线', url: 'https://primary.example/a.m3u8' },
+          { lineId: 'news-backup', name: '公网备用', url: 'https://active.example/a.m3u8' },
+          { lineId: 'news-third', name: '第三线路', url: 'https://third.example/a.m3u8' }
+        ],
+        activeLineIndex: 1
       },
       {
         stationuuid: 'b',
@@ -41,6 +45,12 @@ test('restores Android v1.0.8 playlist data, logo references, order and settings
   assert.equal(result.stations.length, 2);
   const news = result.stations.find((station) => station.id === 'a');
   assert.equal(news?.streamUrl, 'https://active.example/a.m3u8');
+  assert.equal(news?.activeLineIndex, 1);
+  assert.deepEqual(news?.streamLines.map((line) => line.url), [
+    'https://primary.example/a.m3u8',
+    'https://active.example/a.m3u8',
+    'https://third.example/a.m3u8'
+  ]);
   assert.equal(news?.iconUrl, 'data:image/png;base64,QUJD');
   assert.equal(news?.favorite, true);
   assert.equal(result.settings.dynamicColor, false);

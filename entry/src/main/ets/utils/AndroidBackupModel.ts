@@ -25,6 +25,8 @@ export interface AndroidBackupStation {
   id: string;
   name: string;
   streamUrl: string;
+  streamLines: AndroidBackupStreamLine[];
+  activeLineIndex: number;
   iconUrl: string;
   tags: string;
   country: string;
@@ -38,8 +40,20 @@ export interface AndroidV108BackupResult {
   settings: AndroidBackupSettingsPatch;
 }
 
+export interface AndroidBackupStreamLine {
+  id: string;
+  name: string;
+  url: string;
+  priority: number;
+  isStable: boolean;
+}
+
 interface AndroidLineJson {
+  lineId?: string;
+  name?: string;
   url?: string;
+  priority?: number;
+  isStable?: boolean;
 }
 
 interface AndroidStationJson {
@@ -124,6 +138,47 @@ function activeStreamUrl(station: AndroidStationJson): string {
   return resolved.length > 0 ? resolved : text(station.url);
 }
 
+function androidStreamLines(station: AndroidStationJson): AndroidBackupStreamLine[] {
+  const sourceLines = Array.isArray(station.lines) ? station.lines : [];
+  const lines: AndroidBackupStreamLine[] = [];
+  const seen = new Set<string>();
+  sourceLines.forEach((line: AndroidLineJson, index: number) => {
+    const url = text(line.url);
+    if (url.length === 0 || seen.has(url)) {
+      return;
+    }
+    seen.add(url);
+    lines.push({
+      id: text(line.lineId).length > 0 ? text(line.lineId) : `line-${index + 1}`,
+      name: text(line.name).length > 0 ? text(line.name) : `线路 ${index + 1}`,
+      url: url,
+      priority: typeof line.priority === 'number' ? line.priority : index + 1,
+      isStable: line.isStable !== false
+    });
+  });
+  if (lines.length === 0) {
+    const fallbackUrl = activeStreamUrl(station);
+    if (fallbackUrl.length > 0) {
+      lines.push({
+        id: 'default',
+        name: '公网主线',
+        url: fallbackUrl,
+        priority: 1,
+        isStable: false
+      });
+    }
+  }
+  return lines;
+}
+
+function validActiveLineIndex(station: AndroidStationJson, lineCount: number): number {
+  if (lineCount === 0) {
+    return 0;
+  }
+  const index = typeof station.activeLineIndex === 'number' ? station.activeLineIndex : 0;
+  return index >= 0 && index < lineCount ? index : 0;
+}
+
 function parseJsonStations(
   playlistText: string,
   logos: Map<string, AndroidBackupLogoEntry>
@@ -153,10 +208,13 @@ function parseJsonStations(
       return;
     }
     seenIds.add(id);
+    const streamLines = androidStreamLines(item);
     stations.push({
       id: id,
       name: name,
       streamUrl: streamUrl,
+      streamLines: streamLines,
+      activeLineIndex: validActiveLineIndex(item, streamLines.length),
       iconUrl: resolveIcon(text(item.favicon), logos),
       tags: text(item.tags),
       country: text(item.country),
@@ -214,6 +272,14 @@ function parseM3uStations(
       id: `android-m3u-${index + 1}`,
       name: entry.name,
       streamUrl: entry.streamUrl,
+      streamLines: [{
+        id: 'default',
+        name: 'M3U 主线',
+        url: entry.streamUrl,
+        priority: 1,
+        isStable: false
+      }],
+      activeLineIndex: 0,
       iconUrl: entry.iconUrl,
       tags: 'M3U恢复',
       country: '',

@@ -1,7 +1,17 @@
+export interface StreamLine {
+  id: string;
+  name: string;
+  url: string;
+  priority: number;
+  isStable: boolean;
+}
+
 export interface Station {
   id: string;
   name: string;
   streamUrl: string;
+  streamLines?: StreamLine[];
+  activeLineIndex?: number;
   iconUrl: string;
   tags: string;
   country: string;
@@ -92,10 +102,23 @@ export function createDefaultSettings(): AppSettings {
 }
 
 export function copyStation(station: Station): Station {
+  const streamLines = Array.isArray(station.streamLines)
+    ? station.streamLines.map((line: StreamLine): StreamLine => {
+      return {
+        id: line.id,
+        name: line.name,
+        url: line.url,
+        priority: line.priority,
+        isStable: line.isStable
+      };
+    })
+    : undefined;
   return {
     id: station.id,
     name: station.name,
     streamUrl: station.streamUrl,
+    streamLines: streamLines,
+    activeLineIndex: station.activeLineIndex ?? 0,
     iconUrl: station.iconUrl,
     tags: station.tags,
     country: station.country,

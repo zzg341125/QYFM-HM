@@ -2,28 +2,65 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildLivePlaybackTuning,
-  recoveryDelayMs,
+  buildPlaybackCandidates,
+  audioInterruptAction,
   shouldResumeAfterForeground
 } from '../entry/src/main/ets/utils/PlaybackRecovery.ts';
 
-test('backs off repeated live stream reconnects without retrying forever at one second', () => {
+test('uses LX-FM live tuning with a 0.25 second fast start waterline', () => {
+  assert.deepEqual(buildLivePlaybackTuning(true), {
+    preferredBufferDuration: 5,
+    preferredBufferDurationForPlaying: 0.25,
+    thresholdForAutoQuickPlay: 2.25,
+    watchdogTimeoutMs: 6500,
+    maxAutoRetries: 2,
+    refreshRetryDelayMs: 600
+  });
+  assert.deepEqual(buildLivePlaybackTuning(false), {
+    preferredBufferDuration: 5,
+    preferredBufferDurationForPlaying: 0.8,
+    thresholdForAutoQuickPlay: 2.8,
+    watchdogTimeoutMs: 6500,
+    maxAutoRetries: 2,
+    refreshRetryDelayMs: 600
+  });
+});
+
+test('fails over from the active LX-FM line through later backup lines only', () => {
+  const candidates = buildPlaybackCandidates({
+    streamUrl: 'https://primary.example/live.m3u8',
+    activeLineIndex: 1,
+    streamLines: [
+      { id: 'primary', name: '官方专线', url: 'https://primary.example/live.m3u8' },
+      { id: 'backup-a', name: '公网备用', url: 'https://backup-a.example/live.mp3' },
+      { id: 'backup-b', name: '第三线路', url: 'https://backup-b.example/live.m3u8' }
+    ]
+  });
+
+  assert.deepEqual(candidates.map((candidate) => candidate.url), [
+    'https://backup-a.example/live.mp3',
+    'https://backup-b.example/live.m3u8'
+  ]);
+  assert.deepEqual(candidates.map((candidate) => candidate.lineIndex), [1, 2]);
+});
+
+test('uses the single stream URL when an older station has no explicit lines', () => {
   assert.deepEqual(
-    [0, 1, 2, 3, 4, 5, 6].map(recoveryDelayMs),
-    [1000, 2000, 4000, 8000, 16000, 30000, 30000]
+    buildPlaybackCandidates({
+      streamUrl: 'https://legacy.example/live',
+      activeLineIndex: 0,
+      streamLines: []
+    }),
+    [{ url: 'https://legacy.example/live', lineIndex: 0, name: '默认主线' }]
   );
 });
 
-test('uses a stable HLS restart waterline and a larger restart threshold', () => {
-  assert.deepEqual(buildLivePlaybackTuning(true, false), {
-    preferredBufferDuration: 20,
-    preferredBufferDurationForPlaying: 3,
-    thresholdForAutoQuickPlay: 7
-  });
-  assert.deepEqual(buildLivePlaybackTuning(false, true), {
-    preferredBufferDuration: 45,
-    preferredBufferDurationForPlaying: 5,
-    thresholdForAutoQuickPlay: 9
-  });
+test('resumes after a temporary audio interruption but not after a user pause', () => {
+  assert.equal(audioInterruptAction('begin', 'pause', false), 'pause');
+  assert.equal(audioInterruptAction('begin', 'stop', false), 'pause');
+  assert.equal(audioInterruptAction('end', 'resume', false), 'resume');
+  assert.equal(audioInterruptAction('end', 'resume', true), 'none');
+  assert.equal(audioInterruptAction('begin', 'pause', true), 'none');
 });
 
 test('resumes an interrupted live stream on foreground but respects manual pause', () => {
