@@ -47,6 +47,7 @@ function decodeAscii(data: Uint8Array): string {
 export class IcecastStreamRelay {
   private request: http.HttpRequest | undefined = undefined;
   private tcpSocket: socket.TCPSocket | undefined = undefined;
+  private tlsSocket: socket.TLSSocket | undefined = undefined;
   private path: string = '';
   private writeFd: number = -1;
   private readFd: number = -1;
@@ -92,7 +93,11 @@ export class IcecastStreamRelay {
     this.passthrough = true;
     const endpoint = parseHttpEndpoint(url);
     if (endpoint !== undefined) {
-      await this.startTcpRequest(endpoint);
+      if (endpoint.secure) {
+        await this.startTlsRequest(endpoint);
+      } else {
+        await this.startTcpRequest(endpoint);
+      }
     } else {
       this.startHttpRequest(url);
     }
@@ -126,7 +131,11 @@ export class IcecastStreamRelay {
     ).fd;
     const endpoint = parseHttpEndpoint(url);
     if (endpoint !== undefined) {
-      await this.startTcpRequest(endpoint);
+      if (endpoint.secure) {
+        await this.startTlsRequest(endpoint);
+      } else {
+        await this.startTcpRequest(endpoint);
+      }
     } else {
       this.startHttpRequest(url);
     }
@@ -185,6 +194,17 @@ export class IcecastStreamRelay {
       const businessError = error as BusinessError;
       console.error(`释放 Icecast TCP 请求失败: ${businessError.message ?? '未知错误'}`);
     }
+    try {
+      this.tlsSocket?.off('message', this.socketMessageListener);
+      this.tlsSocket?.off('close', this.socketCloseListener);
+      this.tlsSocket?.off('error', this.socketErrorListener);
+      this.tlsSocket?.close().catch((error: BusinessError): void => {
+        console.info(`关闭 Icecast TLS 连接: ${error.message ?? '未知错误'}`);
+      });
+    } catch (error) {
+      const businessError = error as BusinessError;
+      console.error(`释放 Icecast TLS 请求失败: ${businessError.message ?? '未知错误'}`);
+    }
     if (this.readFd >= 0) {
       fileIo.closeSync(this.readFd);
       this.readFd = -1;
@@ -218,14 +238,42 @@ export class IcecastStreamRelay {
       },
       timeout: 15000
     });
-    const request =
-      `GET ${endpoint.path} HTTP/1.1\r\n` +
+    await tcp.send({ data: this.buildRequest(endpoint), encoding: 'UTF-8' });
+  }
+
+  private async startTlsRequest(endpoint: HttpEndpoint): Promise<void> {
+    const tls = socket.constructTLSSocketInstance();
+    this.tlsSocket = tls;
+    tls.on('message', this.socketMessageListener);
+    tls.on('close', this.socketCloseListener);
+    tls.on('error', this.socketErrorListener);
+    await tls.bind({
+      address: '0.0.0.0',
+      family: 1,
+      port: 0
+    });
+    await tls.connect({
+      address: {
+        address: endpoint.host,
+        family: 1,
+        port: endpoint.port
+      },
+      secureOptions: {
+        protocols: [socket.Protocol.TLSv12, socket.Protocol.TLSv13]
+      },
+      ALPNProtocols: ['http/1.1'],
+      timeout: 15000
+    });
+    await tls.send(this.buildRequest(endpoint));
+  }
+
+  private buildRequest(endpoint: HttpEndpoint): string {
+    return `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.25 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.26 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
-    await tcp.send({ data: request, encoding: 'UTF-8' });
   }
 
   private startHttpRequest(url: string): void {
@@ -258,7 +306,7 @@ export class IcecastStreamRelay {
       this.ended = true;
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.25 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.26 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };

@@ -20,31 +20,42 @@ export interface HttpEndpoint {
   port: number;
   path: string;
   hostHeader: string;
+    secure: boolean;
 }
 
 export function parseHttpEndpoint(url: string): HttpEndpoint | undefined {
-  const match = url.trim().match(/^http:\/\/([^/:?#]+)(?::(\d+))?([^#]*)/i);
+  const match = url.trim().match(/^(https?):\/\/([^/:?#]+)(?::(\d+))?([^#]*)/i);
   if (match === null) {
     return undefined;
   }
-  const host = match[1];
-  const port = match[2] === undefined ? 80 : Number(match[2]);
+  const secure = match[1].toLowerCase() === 'https';
+  const host = match[2];
+  const defaultPort = secure ? 443 : 80;
+  const port = match[3] === undefined ? defaultPort : Number(match[3]);
   if (!Number.isFinite(port) || port <= 0 || port > 65535) {
     return undefined;
   }
-  const path = match[3].length === 0 ? '/' : match[3];
+  const path = match[4].length === 0 ? '/' : match[4];
   return {
     host: host,
     port: port,
     path: path,
-    hostHeader: port === 80 ? host : `${host}:${port}`
+    hostHeader: port === defaultPort ? host : `${host}:${port}`,
+    secure: secure
   };
+}
+
+export function isKnownAacStreamUrl(url: string): boolean {
+  const value = url.trim().toLowerCase();
+  const path = value.split(/[?#]/)[0];
+  return path.endsWith('.aac') ||
+    /^https?:\/\/radiolive\.nz936\.com:8443\/fm994(?:$|[/?])/.test(value);
 }
 
 export function isProgressiveAudioUrl(url: string): boolean {
   const value = url.trim().toLowerCase();
   const path = value.split(/[?#]/)[0];
-  return path.endsWith('.mp3') || path.endsWith('.aac') ||
+  return path.endsWith('.mp3') || isKnownAacStreamUrl(value) ||
     /[?&]\.(?:mp3|aac)(?:&|=|$)/.test(value);
 }
 

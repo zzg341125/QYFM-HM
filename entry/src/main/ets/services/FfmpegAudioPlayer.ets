@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import ffmpeg from 'libqyfm_ffmpeg.so';
-import { isProgressiveAudioUrl } from '../utils/IcyMetadata';
+import { isKnownAacStreamUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
 import { IcecastStreamRelay } from './IcecastStreamRelay';
 
 export type FfmpegPlayerState = 'buffering' | 'playing' | 'paused' | 'stopped' | 'error';
@@ -147,8 +147,7 @@ export class FfmpegAudioPlayer {
   }
 
   private codecForUrl(url: string): string {
-    const value = url.toLowerCase().split(/[?#]/)[0];
-    return value.endsWith('.aac') ? 'aac' : 'mp3';
+    return isKnownAacStreamUrl(url) ? 'aac' : 'mp3';
   }
 
   private decodeChunk(chunk: Uint8Array): void {

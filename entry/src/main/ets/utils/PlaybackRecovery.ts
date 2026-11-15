@@ -64,13 +64,6 @@ export function buildPlaybackCandidates(station: PlaybackStationSource): Playbac
   return candidates;
 }
 
-export function shouldUseDirectPlayer(url: string): boolean {
-  const value = url.trim().toLowerCase();
-  return value.startsWith('https://lhttp.qtfm.cn/') ||
-    value.startsWith('https://lhttp-hw.qtfm.cn/') ||
-    value.startsWith('https://lhttp.qingting.fm/');
-}
-
 export type AudioInterruptAction = 'pause' | 'resume' | 'none';
 
 export function audioInterruptAction(

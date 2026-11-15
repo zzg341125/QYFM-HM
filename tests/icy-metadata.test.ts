@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   HttpChunkDecoder,
   IcyMetadataStripper,
+  isKnownAacStreamUrl,
   isProgressiveAudioUrl,
   parseHttpEndpoint,
   parseIcyMetaint,
@@ -49,7 +50,18 @@ test('parses legacy HTTP Icecast endpoints and chunked response bodies', () => {
       host: 'lhttp.qingting.fm',
       port: 80,
       path: '/live/4915/64k.mp3?token=1',
-      hostHeader: 'lhttp.qingting.fm'
+      hostHeader: 'lhttp.qingting.fm',
+      secure: false
+    }
+  );
+  assert.deepEqual(
+    parseHttpEndpoint('https://lhttp.qtfm.cn/live/20500149/64k.mp3?token=1'),
+    {
+      host: 'lhttp.qtfm.cn',
+      port: 443,
+      path: '/live/20500149/64k.mp3?token=1',
+      hostHeader: 'lhttp.qtfm.cn',
+      secure: true
     }
   );
   const decoder = new HttpChunkDecoder();
@@ -64,4 +76,10 @@ test('parses legacy HTTP Icecast endpoints and chunked response bodies', () => {
   assert.deepEqual(Array.from(first), []);
   assert.deepEqual(Array.from(second), [1, 2, 3, 4, 5, 6, 7]);
   assert.equal(decoder.isEnded(), true);
+});
+
+test('recognizes the extensionless New Zealand AAC Icecast endpoint', () => {
+  assert.equal(isKnownAacStreamUrl('http://radiolive.nz936.com:8443/fm994'), true);
+  assert.equal(isProgressiveAudioUrl('http://radiolive.nz936.com:8443/fm994'), true);
+  assert.equal(isKnownAacStreamUrl('https://example.com/live/fm994'), false);
 });

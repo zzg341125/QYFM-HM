@@ -18,8 +18,7 @@ import {
   PlaybackCandidate,
   LivePlaybackTuning,
   shouldAutoPlayOnBluetoothConnect,
-  shouldResumeAfterForeground,
-  shouldUseDirectPlayer
+  shouldResumeAfterForeground
 } from '../utils/PlaybackRecovery';
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
 import { safeSessionArtwork } from '../utils/SessionArtwork';
@@ -38,7 +37,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.25 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.26 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -468,8 +467,7 @@ export class RadioController {
     }
     oldRelay?.destroy();
 
-    if (this.settings.ffmpegDecoder && !shouldUseDirectPlayer(candidate.url) &&
-      candidate.url !== this.ffmpegFallbackUrl &&
+    if (this.settings.ffmpegDecoder && candidate.url !== this.ffmpegFallbackUrl &&
       FfmpegAudioPlayer.supports(candidate.url) &&
       this.context !== undefined) {
       const ffmpegPlayer = new FfmpegAudioPlayer({
@@ -531,8 +529,7 @@ export class RadioController {
       }
       this.handleAudioInterrupt(event);
     });
-    if (this.settings.icecastCompatibility && !shouldUseDirectPlayer(candidate.url) &&
-      IcecastStreamRelay.supports(candidate.url) &&
+    if (this.settings.icecastCompatibility && IcecastStreamRelay.supports(candidate.url) &&
       this.context !== undefined) {
       const relay = new IcecastStreamRelay();
       try {
