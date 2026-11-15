@@ -28,3 +28,10 @@ test('keeps unrelated radio URLs unchanged', () => {
   const url = 'https://lhttp.qtfm.cn/live/1260/64k.mp3';
   assert.equal(migrateLegacyStreamUrl(url), url);
 });
+
+test('uses the verified HTTP Icecast endpoint for the US Mandarin station', () => {
+  assert.equal(
+    migrateLegacyStreamUrl('https://video1.getstreamhosting.com:8292/stream?.mp3'),
+    'http://video1.getstreamhosting.com:8292/stream?.mp3'
+  );
+});

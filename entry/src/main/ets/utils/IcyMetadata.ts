@@ -42,8 +42,9 @@ export function parseHttpEndpoint(url: string): HttpEndpoint | undefined {
 }
 
 export function isProgressiveMp3Url(url: string): boolean {
-  const path = url.trim().toLowerCase().split(/[?#]/)[0];
-  return path.endsWith('.mp3');
+  const value = url.trim().toLowerCase();
+  const path = value.split(/[?#]/)[0];
+  return path.endsWith('.mp3') || /[?&]\.mp3(?:&|=|$)/.test(value);
 }
 
 function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {

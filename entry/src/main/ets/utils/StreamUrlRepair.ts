@@ -6,5 +6,12 @@ export function migrateLegacyStreamUrl(url: string): string {
       'http://radiolive.nz936.com:8443/'
     );
   }
+  if (/^https?:\/\/video1\.getstreamhosting\.com:8292\/stream\?\.mp3(?:&.*)?$/i
+    .test(trimmed)) {
+    return trimmed.replace(
+      /^https:\/\//i,
+      'http://'
+    );
+  }
   return trimmed;
 }

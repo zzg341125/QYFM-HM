@@ -34,6 +34,10 @@ test('removes Icecast metadata split across network chunks', () => {
 test('recognizes old MP3 links that may carry Icecast metadata', () => {
   assert.equal(isProgressiveMp3Url('http://lhttp.qingting.fm/live/4915/64k.mp3'), true);
   assert.equal(isProgressiveMp3Url('https://radio.example/live.MP3?token=1'), true);
+  assert.equal(
+    isProgressiveMp3Url('https://video1.getstreamhosting.com:8292/stream?.mp3'),
+    true
+  );
   assert.equal(isProgressiveMp3Url('https://radio.example/live.m3u8'), false);
 });
 
