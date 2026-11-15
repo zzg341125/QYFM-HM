@@ -130,21 +130,17 @@ export class BluetoothResumeManager {
     if (this.pending === undefined && this.userPlaybackActive) {
       this.lastActiveDeviceId = event.deviceId;
     }
-    if (this.pending === undefined || event.deviceId !== this.pending.deviceId) {
-      return;
-    }
-    if (Date.now() > this.pending.deadline) {
-      this.callbacks.onDiagnostics(`同一蓝牙设备已超过 ${this.resumeWindowMinutes} 分钟续播窗口`);
+    if (this.pending !== undefined && event.deviceId === this.pending.deviceId) {
+      if (Date.now() > this.pending.deadline) {
+        this.callbacks.onDiagnostics(`同一蓝牙设备已超过 ${this.resumeWindowMinutes} 分钟续播窗口`);
+      } else {
+        this.callbacks.onDiagnostics(`同一蓝牙设备 ${event.deviceId} 已重连，准备续播`);
+      }
       this.pending = undefined;
       this.lostHandled = false;
       this.clearExpiryTimer();
-      return;
     }
     this.lastActiveDeviceId = event.deviceId;
-    this.pending = undefined;
-    this.lostHandled = false;
-    this.clearExpiryTimer();
-    this.callbacks.onDiagnostics(`同一蓝牙设备 ${event.deviceId} 已重连，准备续播`);
     this.callbacks.onBluetoothRestored(event.deviceId);
   }
 

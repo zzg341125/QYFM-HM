@@ -99,3 +99,12 @@ export function shouldResumeAfterForeground(
     playerState === 'completed' ||
     playerState === 'idle';
 }
+
+export function shouldAutoPlayOnBluetoothConnect(
+  enabled: boolean,
+  isPlaying: boolean,
+  buffering: boolean,
+  hasStation: boolean
+): boolean {
+  return enabled && !isPlaying && !buffering && hasStation;
+}

@@ -93,6 +93,10 @@ export class StationRepository {
         fastStart: parsed.fastStart ?? defaults.fastStart,
         largeBuffer: parsed.largeBuffer ?? defaults.largeBuffer,
         pauseOnUnplug: parsed.pauseOnUnplug ?? defaults.pauseOnUnplug,
+        pauseOnBluetoothDisconnect:
+          parsed.pauseOnBluetoothDisconnect ?? defaults.pauseOnBluetoothDisconnect,
+        autoPlayOnBluetoothConnect:
+          parsed.autoPlayOnBluetoothConnect ?? defaults.autoPlayOnBluetoothConnect,
         lastStationId: parsed.lastStationId ?? defaults.lastStationId,
         webdavUrl: parsed.webdavUrl ?? defaults.webdavUrl,
         webdavUser: parsed.webdavUser ?? defaults.webdavUser,
@@ -129,6 +133,8 @@ export class StationRepository {
       fastStart: settings.fastStart,
       largeBuffer: settings.largeBuffer,
       pauseOnUnplug: settings.pauseOnUnplug,
+      pauseOnBluetoothDisconnect: settings.pauseOnBluetoothDisconnect,
+      autoPlayOnBluetoothConnect: settings.autoPlayOnBluetoothConnect,
       lastStationId: settings.lastStationId,
       webdavUrl: settings.webdavUrl,
       webdavUser: settings.webdavUser,
@@ -137,7 +143,7 @@ export class StationRepository {
     const backup: StationBackup = {
       schemaVersion: BACKUP_SCHEMA_VERSION,
       app: 'QYFM HarmonyOS',
-      appVersion: '1.0.17',
+      appVersion: '1.0.18',
       exportedAt: new Date().toISOString(),
       stationOrder: stationOrder,
       stations: stations.map((station: Station) => copyStation(station)),
@@ -183,6 +189,10 @@ export class StationRepository {
       defaultSettings.fastStart = backup.settings.fastStart ?? defaultSettings.fastStart;
       defaultSettings.largeBuffer = backup.settings.largeBuffer ?? defaultSettings.largeBuffer;
       defaultSettings.pauseOnUnplug = backup.settings.pauseOnUnplug ?? defaultSettings.pauseOnUnplug;
+      defaultSettings.pauseOnBluetoothDisconnect =
+        backup.settings.pauseOnBluetoothDisconnect ?? defaultSettings.pauseOnBluetoothDisconnect;
+      defaultSettings.autoPlayOnBluetoothConnect =
+        backup.settings.autoPlayOnBluetoothConnect ?? defaultSettings.autoPlayOnBluetoothConnect;
       defaultSettings.lastStationId = backup.settings.lastStationId ?? defaultSettings.lastStationId;
       defaultSettings.webdavUrl = backup.settings.webdavUrl ?? defaultSettings.webdavUrl;
       defaultSettings.webdavUser = backup.settings.webdavUser ?? defaultSettings.webdavUser;

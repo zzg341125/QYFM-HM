@@ -4,6 +4,7 @@ import {
   buildLivePlaybackTuning,
   buildPlaybackCandidates,
   audioInterruptAction,
+  shouldAutoPlayOnBluetoothConnect,
   shouldResumeAfterForeground
 } from '../entry/src/main/ets/utils/PlaybackRecovery.ts';
 
@@ -72,4 +73,12 @@ test('resumes an interrupted live stream on foreground but respects manual pause
   assert.equal(shouldResumeAfterForeground('paused', true, false, true), false);
   assert.equal(shouldResumeAfterForeground('paused', false, true, true), false);
   assert.equal(shouldResumeAfterForeground('paused', false, false, false), false);
+});
+
+test('starts the remembered station on Bluetooth connect only when playback is idle', () => {
+  assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, false, true), true);
+  assert.equal(shouldAutoPlayOnBluetoothConnect(false, false, false, true), false);
+  assert.equal(shouldAutoPlayOnBluetoothConnect(true, true, false, true), false);
+  assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, true, true), false);
+  assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, false, false), false);
 });

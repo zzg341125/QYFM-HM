@@ -6,6 +6,7 @@ import { audio } from '@kit.AudioKit';
 import { AppSettings, createDefaultSettings, Station, StreamLine } from '../models/Station';
 import { BackgroundTaskService } from './BackgroundTaskService';
 import { BluetoothResumeCallbacks, BluetoothResumeManager } from './BluetoothResumeManager';
+import { IcecastStreamRelay } from './IcecastStreamRelay';
 import { RadioCnResolver } from './RadioCnResolver';
 import { SilentAudioKeepAlive } from './SilentAudioKeepAlive';
 import {
@@ -15,6 +16,7 @@ import {
   buildPlaybackCandidates,
   PlaybackCandidate,
   LivePlaybackTuning,
+  shouldAutoPlayOnBluetoothConnect,
   shouldResumeAfterForeground
 } from '../utils/PlaybackRecovery';
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
@@ -34,7 +36,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.17 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.18 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -48,8 +50,10 @@ export class RadioController {
 
   private context: common.UIAbilityContext | undefined = undefined;
   private player: media.AVPlayer | undefined = undefined;
+  private icyRelay: IcecastStreamRelay | undefined = undefined;
   private session: avSession.AVSession | undefined = undefined;
   private currentStation: Station | undefined = undefined;
+  private defaultStation: Station | undefined = undefined;
   private settings: AppSettings = createDefaultSettings();
   private listeners: RadioStateListener[] = [];
   private waitingForBluetooth: boolean = false;
@@ -97,10 +101,14 @@ export class RadioController {
     this.context = context;
     this.settings = settings;
     this.bluetooth.setResumeWindowMinutes(settings.resumeWindowMinutes);
-    if (settings.autoResume && this.context !== undefined) {
+    if (this.shouldMonitorBluetooth() && this.context !== undefined) {
       this.bluetooth.start();
     }
     this.notify();
+  }
+
+  setDefaultStation(station: Station): void {
+    this.defaultStation = station;
   }
 
   subscribe(listener: RadioStateListener): void {
@@ -121,7 +129,7 @@ export class RadioController {
     this.settings = settings;
     this.tuning = buildLivePlaybackTuning(settings.fastStart);
     this.bluetooth.setResumeWindowMinutes(settings.resumeWindowMinutes);
-    if (settings.autoResume) {
+    if (this.shouldMonitorBluetooth()) {
       this.bluetooth.start();
     } else {
       this.bluetooth.stop();
@@ -199,7 +207,7 @@ export class RadioController {
     }
     try {
       await this.backgroundTasks.start(context);
-      if (this.settings.autoResume) {
+      if (this.shouldMonitorBluetooth()) {
         this.bluetooth.setPlaybackActive(true);
       }
       await this.startCandidate(this.currentCandidates[0], false);
@@ -296,6 +304,8 @@ export class RadioController {
       await this.player.release();
       this.player = undefined;
     }
+    this.icyRelay?.destroy();
+    this.icyRelay = undefined;
     if (this.context !== undefined) {
       await this.backgroundTasks.stop(this.context);
     }
@@ -408,10 +418,13 @@ export class RadioController {
   }
 
   private async replacePlayer(candidate: PlaybackCandidate): Promise<void> {
+    console.info(`准备播放线路: ${candidate.url}`);
     this.clearRecoveryTimers();
     this.buffering = true;
     const oldPlayer = this.player;
+    const oldRelay = this.icyRelay;
     this.player = undefined;
+    this.icyRelay = undefined;
     if (oldPlayer !== undefined) {
       try {
         await oldPlayer.release();
@@ -420,6 +433,7 @@ export class RadioController {
         console.error(`旧播放器释放失败: ${businessError.message}`);
       }
     }
+    oldRelay?.destroy();
 
     const player = await media.createAVPlayer();
     this.player = player;
@@ -458,14 +472,41 @@ export class RadioController {
       }
       this.handleAudioInterrupt(event);
     });
+    if (IcecastStreamRelay.supports(candidate.url) && this.context !== undefined) {
+      const relay = new IcecastStreamRelay();
+      try {
+        const relaySource = await relay.prepare(
+          this.context,
+          candidate.url,
+          this.settings.fastStart
+        );
+        if (relaySource !== undefined && this.player === player) {
+          this.icyRelay = relay;
+          player.dataSrc = relaySource;
+        } else {
+          relay.destroy();
+          await this.setUrlMediaSource(player, candidate.url);
+        }
+      } catch (error) {
+        relay.destroy();
+        const businessError = error as BusinessError;
+        console.error(`Icecast 兼容模式失败，改用系统直连: ${businessError.message ?? '未知错误'}`);
+        await this.setUrlMediaSource(player, candidate.url);
+      }
+    } else {
+      await this.setUrlMediaSource(player, candidate.url);
+    }
+    this.startWatchdog(player);
+  }
+
+  private async setUrlMediaSource(player: media.AVPlayer, url: string): Promise<void> {
     const headers: Record<string, string> = {
       'User-Agent': LIVE_USER_AGENT,
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };
-    const source = media.createMediaSourceWithUrl(candidate.url, headers);
+    const source = media.createMediaSourceWithUrl(url, headers);
     await player.setMediaSource(source);
-    this.startWatchdog(player);
   }
 
   private async handlePlayerState(player: media.AVPlayer, state: string): Promise<void> {
@@ -534,6 +575,8 @@ export class RadioController {
         console.error(`释放故障播放器失败: ${error.message ?? '未知错误'}`);
       });
     }
+    this.icyRelay?.destroy();
+    this.icyRelay = undefined;
     this.updateSessionPlaybackState(false).catch((error: BusinessError) => {
       console.error(`更新媒体暂停状态失败: ${error.message}`);
     });
@@ -699,27 +742,44 @@ export class RadioController {
   }
 
   private async handleBluetoothLost(deviceId: string): Promise<void> {
-    if (!this.settings.autoResume || this.currentStation === undefined || !this.isPlaying) {
+    if (this.currentStation === undefined || !this.isPlaying) {
       return;
     }
-    if (!this.settings.pauseOnUnplug) {
+    if (!this.settings.pauseOnBluetoothDisconnect) {
       this.statusText = '蓝牙已断开，继续通过扬声器播放';
       this.notify();
       return;
     }
-    await this.pause('蓝牙已断开，等待同一设备重连', false);
-    await this.silentKeepAlive.start();
-    this.waitingForBluetooth = true;
-    this.statusText =
-      `蓝牙已断开，${this.settings.resumeWindowMinutes} 分钟内重连将自动续播`;
+    await this.pause('蓝牙已断开，已自动暂停', false);
+    if (this.settings.autoResume) {
+      await this.silentKeepAlive.start();
+      this.waitingForBluetooth = true;
+      this.statusText =
+        `蓝牙已断开，${this.settings.resumeWindowMinutes} 分钟内重连将自动续播`;
+    } else {
+      this.waitingForBluetooth = false;
+      this.statusText = '蓝牙已断开，已自动暂停';
+    }
     this.notify();
   }
 
   private async handleBluetoothRestored(deviceId: string): Promise<void> {
-    if (!this.waitingForBluetooth || this.currentStation === undefined) {
+    if (this.waitingForBluetooth && this.settings.autoResume && this.currentStation !== undefined) {
+      await this.resume(`蓝牙设备 ${deviceId} 已重连，自动续播`);
       return;
     }
-    await this.resume(`蓝牙设备 ${deviceId} 已重连，自动续播`);
+    const station = this.currentStation ?? this.defaultStation;
+    if (!shouldAutoPlayOnBluetoothConnect(
+      this.settings.autoPlayOnBluetoothConnect,
+      this.isPlaying,
+      this.buffering,
+      station !== undefined
+    ) || station === undefined) {
+      return;
+    }
+    this.statusText = `蓝牙设备 ${deviceId} 已连接，自动开始播放`;
+    this.notify();
+    await this.playStation(station);
   }
 
   private async handleResumeWindowExpired(deviceId: string): Promise<void> {
@@ -741,5 +801,11 @@ export class RadioController {
     this.listeners.forEach((listener: RadioStateListener) => {
       listener(snapshot);
     });
+  }
+
+  private shouldMonitorBluetooth(): boolean {
+    return this.settings.autoResume ||
+      this.settings.pauseOnBluetoothDisconnect ||
+      this.settings.autoPlayOnBluetoothConnect;
   }
 }

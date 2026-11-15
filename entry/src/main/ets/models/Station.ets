@@ -34,6 +34,8 @@ export interface AppSettings {
   fastStart: boolean;
   largeBuffer: boolean;
   pauseOnUnplug: boolean;
+  pauseOnBluetoothDisconnect: boolean;
+  autoPlayOnBluetoothConnect: boolean;
   lastStationId: string;
   webdavUrl: string;
   webdavUser: string;
@@ -66,6 +68,8 @@ export interface PortableSettings {
   fastStart: boolean;
   largeBuffer: boolean;
   pauseOnUnplug: boolean;
+  pauseOnBluetoothDisconnect: boolean;
+  autoPlayOnBluetoothConnect: boolean;
   lastStationId: string;
   webdavUrl: string;
   webdavUser: string;
@@ -93,6 +97,8 @@ export function createDefaultSettings(): AppSettings {
     fastStart: true,
     largeBuffer: false,
     pauseOnUnplug: true,
+    pauseOnBluetoothDisconnect: true,
+    autoPlayOnBluetoothConnect: true,
     lastStationId: '',
     webdavUrl: '',
     webdavUser: '',
@@ -143,6 +149,8 @@ export function copySettings(settings: AppSettings): AppSettings {
     fastStart: settings.fastStart,
     largeBuffer: settings.largeBuffer,
     pauseOnUnplug: settings.pauseOnUnplug,
+    pauseOnBluetoothDisconnect: settings.pauseOnBluetoothDisconnect,
+    autoPlayOnBluetoothConnect: settings.autoPlayOnBluetoothConnect,
     lastStationId: settings.lastStationId,
     webdavUrl: settings.webdavUrl,
     webdavUser: settings.webdavUser,

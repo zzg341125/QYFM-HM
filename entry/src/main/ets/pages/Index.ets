@@ -112,15 +112,18 @@ struct Index {
       await this.repository.init(context);
       this.stations = await this.repository.loadStations();
       this.settings = await this.repository.loadSettings();
+      await this.requestBluetoothPermission(context);
       await this.radio.init(context, this.settings);
       this.radio.subscribe(this.snapshotListener);
-      await this.requestBluetoothPermission(context);
       this.palette = findTheme(this.settings.themeId);
       const remembered = this.stations.find((station: Station) => station.id === this.settings.lastStationId);
       if (remembered !== undefined) {
         this.currentStation = remembered;
       } else if (this.stations.length > 0) {
         this.currentStation = this.stations[0];
+      }
+      if (this.currentStation !== undefined) {
+        this.radio.setDefaultStation(this.currentStation);
       }
       if (this.settings.autoPlayOnLaunch && this.currentStation !== undefined) {
         await this.playStation(this.currentStation);
@@ -691,6 +694,7 @@ struct Index {
     const settings = copySettings(this.settings);
     settings.autoResume = value;
     this.settings = settings;
+    this.radio.applySettings(settings);
     this.persistSettings();
   }
 
@@ -767,6 +771,22 @@ struct Index {
     const settings = copySettings(this.settings);
     settings.pauseOnUnplug = value;
     this.settings = settings;
+    this.persistSettings();
+  }
+
+  private updatePauseOnBluetoothDisconnect(value: boolean): void {
+    const settings = copySettings(this.settings);
+    settings.pauseOnBluetoothDisconnect = value;
+    this.settings = settings;
+    this.radio.applySettings(settings);
+    this.persistSettings();
+  }
+
+  private updateAutoPlayOnBluetoothConnect(value: boolean): void {
+    const settings = copySettings(this.settings);
+    settings.autoPlayOnBluetoothConnect = value;
+    this.settings = settings;
+    this.radio.applySettings(settings);
     this.persistSettings();
   }
 
@@ -1042,6 +1062,10 @@ struct Index {
         return this.settings.editStreamUrl;
       case 'pauseOnUnplug':
         return this.settings.pauseOnUnplug;
+      case 'pauseOnBluetoothDisconnect':
+        return this.settings.pauseOnBluetoothDisconnect;
+      case 'autoPlayOnBluetoothConnect':
+        return this.settings.autoPlayOnBluetoothConnect;
       case 'autoResume':
         return this.settings.autoResume;
       case 'autoUpdate':
@@ -1082,6 +1106,12 @@ struct Index {
         break;
       case 'pauseOnUnplug':
         this.updatePauseOnUnplug(value);
+        break;
+      case 'pauseOnBluetoothDisconnect':
+        this.updatePauseOnBluetoothDisconnect(value);
+        break;
+      case 'autoPlayOnBluetoothConnect':
+        this.updateAutoPlayOnBluetoothConnect(value);
         break;
       case 'autoResume':
         this.updateAutoResume(value);
@@ -1739,7 +1769,23 @@ struct Index {
           this.SettingsActionRow('⌁', '蓝牙设备识别权限', this.diagnostics, 'bluetoothPermission')
         }
         ListItem() {
-          this.SettingsSwitchRow('⇄', '拔出耳机自动暂停', '耳机或蓝牙断开时自动暂停，避免外放。', 'pauseOnUnplug')
+          this.SettingsSwitchRow('⇄', '有线耳机断开自动暂停', '有线耳机拔出时自动暂停，避免突然外放。', 'pauseOnUnplug')
+        }
+        ListItem() {
+          this.SettingsSwitchRow(
+            '⇠',
+            '蓝牙断开自动暂停',
+            '蓝牙音频断开时立即暂停，不再从手机扬声器继续播放。',
+            'pauseOnBluetoothDisconnect'
+          )
+        }
+        ListItem() {
+          this.SettingsSwitchRow(
+            '▶',
+            '蓝牙连接自动播放',
+            '连接蓝牙音频设备后，自动播放上次收听的电台；应用进程需要在后台保留。',
+            'autoPlayOnBluetoothConnect'
+          )
         }
         ListItem() {
           this.SettingsSwitchRow(
@@ -1763,7 +1809,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.17 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.18 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
