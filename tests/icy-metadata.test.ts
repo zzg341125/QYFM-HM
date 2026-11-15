@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  HttpChunkDecoder,
   IcyMetadataStripper,
   isProgressiveMp3Url,
-  parseIcyMetaint
+  parseHttpEndpoint,
+  parseIcyMetaint,
+  parseIcyMetaintFromHeaderText
 } from '../entry/src/main/ets/utils/IcyMetadata.ts';
 
 test('reads icy-metaint without depending on header casing', () => {
   assert.equal(parseIcyMetaint({ 'icy-metaint': '16000' }), 16000);
   assert.equal(parseIcyMetaint({ 'Icy-MetaData': '1', 'ICY-METAINT': '8192' }), 8192);
   assert.equal(parseIcyMetaint({ 'content-type': 'audio/mpeg' }), 0);
+  assert.equal(parseIcyMetaintFromHeaderText('HTTP/1.1 200 OK\r\nIcy-Metaint: 16000\r\n'), 16000);
 });
 
 test('removes Icecast metadata split across network chunks', () => {
@@ -31,4 +35,28 @@ test('recognizes old MP3 links that may carry Icecast metadata', () => {
   assert.equal(isProgressiveMp3Url('http://lhttp.qingting.fm/live/4915/64k.mp3'), true);
   assert.equal(isProgressiveMp3Url('https://radio.example/live.MP3?token=1'), true);
   assert.equal(isProgressiveMp3Url('https://radio.example/live.m3u8'), false);
+});
+
+test('parses legacy HTTP Icecast endpoints and chunked response bodies', () => {
+  assert.deepEqual(
+    parseHttpEndpoint('http://lhttp.qingting.fm:80/live/4915/64k.mp3?token=1'),
+    {
+      host: 'lhttp.qingting.fm',
+      port: 80,
+      path: '/live/4915/64k.mp3?token=1',
+      hostHeader: 'lhttp.qingting.fm'
+    }
+  );
+  const decoder = new HttpChunkDecoder();
+  const first = decoder.push(new Uint8Array([
+    0x34, 0x0d, 0x0a, 1, 2
+  ]));
+  const second = decoder.push(new Uint8Array([
+    3, 4, 0x0d, 0x0a,
+    0x33, 0x3b, 0x78, 0x3d, 0x31, 0x0d, 0x0a, 5, 6, 7, 0x0d, 0x0a,
+    0x30, 0x0d, 0x0a, 0x0d, 0x0a
+  ]));
+  assert.deepEqual(Array.from(first), []);
+  assert.deepEqual(Array.from(second), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(decoder.isEnded(), true);
 });

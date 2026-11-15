@@ -36,7 +36,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.18 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.19 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -472,7 +472,8 @@ export class RadioController {
       }
       this.handleAudioInterrupt(event);
     });
-    if (IcecastStreamRelay.supports(candidate.url) && this.context !== undefined) {
+    if (this.settings.icecastCompatibility && IcecastStreamRelay.supports(candidate.url) &&
+      this.context !== undefined) {
       const relay = new IcecastStreamRelay();
       try {
         const relaySource = await relay.prepare(

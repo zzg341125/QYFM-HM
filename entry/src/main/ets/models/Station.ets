@@ -36,6 +36,7 @@ export interface AppSettings {
   pauseOnUnplug: boolean;
   pauseOnBluetoothDisconnect: boolean;
   autoPlayOnBluetoothConnect: boolean;
+  icecastCompatibility: boolean;
   lastStationId: string;
   webdavUrl: string;
   webdavUser: string;
@@ -70,6 +71,7 @@ export interface PortableSettings {
   pauseOnUnplug: boolean;
   pauseOnBluetoothDisconnect: boolean;
   autoPlayOnBluetoothConnect: boolean;
+  icecastCompatibility: boolean;
   lastStationId: string;
   webdavUrl: string;
   webdavUser: string;
@@ -99,6 +101,7 @@ export function createDefaultSettings(): AppSettings {
     pauseOnUnplug: true,
     pauseOnBluetoothDisconnect: true,
     autoPlayOnBluetoothConnect: true,
+    icecastCompatibility: true,
     lastStationId: '',
     webdavUrl: '',
     webdavUser: '',
@@ -151,6 +154,7 @@ export function copySettings(settings: AppSettings): AppSettings {
     pauseOnUnplug: settings.pauseOnUnplug,
     pauseOnBluetoothDisconnect: settings.pauseOnBluetoothDisconnect,
     autoPlayOnBluetoothConnect: settings.autoPlayOnBluetoothConnect,
+    icecastCompatibility: settings.icecastCompatibility,
     lastStationId: settings.lastStationId,
     webdavUrl: settings.webdavUrl,
     webdavUser: settings.webdavUser,

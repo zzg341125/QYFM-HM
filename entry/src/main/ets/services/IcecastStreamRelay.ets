@@ -2,18 +2,49 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { media } from '@kit.MediaKit';
-import { http } from '@kit.NetworkKit';
+import { http, socket } from '@kit.NetworkKit';
 import {
+  HttpChunkDecoder,
+  HttpEndpoint,
   IcyMetadataStripper,
   isProgressiveMp3Url,
-  parseIcyMetaint
+  parseHttpEndpoint,
+  parseIcyMetaint,
+  parseIcyMetaintFromHeaderText
 } from '../utils/IcyMetadata';
 
 const PREPARE_TIMEOUT_MS: number = 8000;
 const PLAYBACK_POLL_MS: number = 40;
+const MAX_HEADER_BYTES: number = 64 * 1024;
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  const joined = new Uint8Array(left.length + right.length);
+  joined.set(left, 0);
+  joined.set(right, left.length);
+  return joined;
+}
+
+function findHeaderBoundary(data: Uint8Array): number {
+  for (let index = 0; index + 3 < data.length; index++) {
+    if (data[index] === 13 && data[index + 1] === 10 &&
+      data[index + 2] === 13 && data[index + 3] === 10) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function decodeAscii(data: Uint8Array): string {
+  let value = '';
+  data.forEach((byte: number) => {
+    value += String.fromCharCode(byte);
+  });
+  return value;
+}
 
 export class IcecastStreamRelay {
   private request: http.HttpRequest | undefined = undefined;
+  private tcpSocket: socket.TCPSocket | undefined = undefined;
   private path: string = '';
   private writeFd: number = -1;
   private readFd: number = -1;
@@ -21,11 +52,27 @@ export class IcecastStreamRelay {
   private readPosition: number = 0;
   private icyMetaint: number = 0;
   private headerKnown: boolean = false;
+  private chunked: boolean = false;
+  private headerBuffer: Uint8Array = new Uint8Array(0);
+  private chunkDecoder: HttpChunkDecoder = new HttpChunkDecoder();
+  private pendingInput: ArrayBuffer[] = [];
   private ended: boolean = false;
   private failed: boolean = false;
   private destroyed: boolean = false;
-  private pendingInput: ArrayBuffer[] = [];
   private stripper: IcyMetadataStripper = new IcyMetadataStripper();
+
+  private readonly socketMessageListener = (info: socket.SocketMessageInfo): void => {
+    this.handleSocketMessage(info.message);
+  };
+
+  private readonly socketCloseListener = (): void => {
+    this.ended = true;
+  };
+
+  private readonly socketErrorListener = (error: BusinessError): void => {
+    this.failed = true;
+    console.error(`Icecast TCP 连接失败: ${error.message ?? '未知错误'}`);
+  };
 
   static supports(url: string): boolean {
     return isProgressiveMp3Url(url);
@@ -42,37 +89,12 @@ export class IcecastStreamRelay {
       this.path,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
     ).fd;
-    const request = http.createHttp();
-    this.request = request;
-    request.on('headersReceive', (headers: Object): void => {
-      this.handleHeaders(headers);
-    });
-    request.on('dataReceive', (chunk: ArrayBuffer): void => {
-      this.handleData(chunk);
-    });
-    request.on('dataEnd', (): void => {
-      this.ended = true;
-    });
-    const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.18 (AVPlayer)',
-      'Icy-MetaData': '1',
-      'Accept': '*/*'
-    };
-    const options: http.HttpRequestOptions = {
-      method: http.RequestMethod.GET,
-      header: headers,
-      usingCache: false,
-      connectTimeout: 15000,
-      readTimeout: 0
-    };
-    request.requestInStream(url, options).then((responseCode: number): void => {
-      if (responseCode < 200 || responseCode >= 300) {
-        this.failed = true;
-      }
-    }).catch((error: BusinessError): void => {
-      this.failed = true;
-      console.error(`Icecast 兼容流请求失败: ${error.message ?? '未知错误'}`);
-    });
+    const endpoint = parseHttpEndpoint(url);
+    if (endpoint !== undefined) {
+      await this.startTcpRequest(endpoint);
+    } else {
+      this.startHttpRequest(url);
+    }
 
     const minimumPrebuffer = fastStart ? 8192 : 32768;
     const deadline = Date.now() + PREPARE_TIMEOUT_MS;
@@ -85,7 +107,8 @@ export class IcecastStreamRelay {
         this.destroy();
         return undefined;
       }
-      if (this.icyMetaint > 0 && this.written >= minimumPrebuffer) {
+      if (this.icyMetaint > 0 && (this.written >= minimumPrebuffer ||
+        (this.ended && this.written > 0))) {
         this.readFd = fileIo.openSync(this.path, fileIo.OpenMode.READ_ONLY).fd;
         return {
           fileSize: -1,
@@ -114,7 +137,18 @@ export class IcecastStreamRelay {
       this.request?.destroy();
     } catch (error) {
       const businessError = error as BusinessError;
-      console.error(`释放 Icecast 请求失败: ${businessError.message ?? '未知错误'}`);
+      console.error(`释放 Icecast HTTP 请求失败: ${businessError.message ?? '未知错误'}`);
+    }
+    try {
+      this.tcpSocket?.off('message', this.socketMessageListener);
+      this.tcpSocket?.off('close', this.socketCloseListener);
+      this.tcpSocket?.off('error', this.socketErrorListener);
+      this.tcpSocket?.close().catch((error: BusinessError): void => {
+        console.info(`关闭 Icecast TCP 连接: ${error.message ?? '未知错误'}`);
+      });
+    } catch (error) {
+      const businessError = error as BusinessError;
+      console.error(`释放 Icecast TCP 请求失败: ${businessError.message ?? '未知错误'}`);
     }
     if (this.readFd >= 0) {
       fileIo.closeSync(this.readFd);
@@ -135,41 +169,133 @@ export class IcecastStreamRelay {
     }
   }
 
-  private handleHeaders(headers: Object): void {
-    if (this.headerKnown) {
-      return;
-    }
-    this.headerKnown = true;
-    this.icyMetaint = parseIcyMetaint(headers);
-    console.info(`Icecast 响应头: ${JSON.stringify(headers)}，metaint=${this.icyMetaint}`);
-    if (this.icyMetaint <= 0) {
-      return;
-    }
-    this.stripper.configure(this.icyMetaint);
-    const pending = this.pendingInput;
-    this.pendingInput = [];
-    pending.forEach((chunk: ArrayBuffer) => {
-      this.appendCleanAudio(chunk);
+  private async startTcpRequest(endpoint: HttpEndpoint): Promise<void> {
+    const tcp = socket.constructTCPSocketInstance();
+    this.tcpSocket = tcp;
+    tcp.on('message', this.socketMessageListener);
+    tcp.on('close', this.socketCloseListener);
+    tcp.on('error', this.socketErrorListener);
+    await tcp.connect({
+      address: {
+        address: endpoint.host,
+        family: 1,
+        port: endpoint.port
+      },
+      timeout: 15000
+    });
+    const request =
+      `GET ${endpoint.path} HTTP/1.1\r\n` +
+      `Host: ${endpoint.hostHeader}\r\n` +
+      'User-Agent: QYFM-HarmonyOS/1.0.19 (AVPlayer)\r\n' +
+      'Accept: */*\r\n' +
+      'Icy-MetaData: 1\r\n' +
+      'Connection: keep-alive\r\n\r\n';
+    await tcp.send({ data: request, encoding: 'UTF-8' });
+  }
+
+  private startHttpRequest(url: string): void {
+    const request = http.createHttp();
+    this.request = request;
+    request.on('headersReceive', (headers: Object): void => {
+      if (this.headerKnown || this.destroyed) {
+        return;
+      }
+      this.headerKnown = true;
+      this.icyMetaint = parseIcyMetaint(headers);
+      this.configureStripper();
+      const pending = this.pendingInput;
+      this.pendingInput = [];
+      pending.forEach((chunk: ArrayBuffer) => {
+        this.appendCleanAudio(new Uint8Array(chunk));
+      });
+    });
+    request.on('dataReceive', (chunk: ArrayBuffer): void => {
+      if (this.destroyed) {
+        return;
+      }
+      if (!this.headerKnown) {
+        this.pendingInput.push(chunk);
+        return;
+      }
+      if (this.icyMetaint > 0) {
+        this.appendCleanAudio(new Uint8Array(chunk));
+      }
+    });
+    request.on('dataEnd', (): void => {
+      this.ended = true;
+    });
+    const headers: Record<string, string> = {
+      'User-Agent': 'QYFM-HarmonyOS/1.0.19 (AVPlayer)',
+      'Icy-MetaData': '1',
+      'Accept': '*/*'
+    };
+    request.requestInStream(url, {
+      method: http.RequestMethod.GET,
+      header: headers,
+      usingCache: false,
+      connectTimeout: 15000,
+      readTimeout: 0
+    }).then((responseCode: number): void => {
+      if (responseCode < 200 || responseCode >= 300) {
+        this.failed = true;
+      }
+    }).catch((error: BusinessError): void => {
+      console.info(`Icecast HTTPS 流请求状态: ${error.message ?? '连接结束'}`);
     });
   }
 
-  private handleData(chunk: ArrayBuffer): void {
-    if (this.destroyed) {
+  private handleSocketMessage(chunk: ArrayBuffer): void {
+    if (this.destroyed || this.headerKnown && this.icyMetaint <= 0) {
       return;
     }
+    let data = new Uint8Array(chunk);
     if (!this.headerKnown) {
-      this.pendingInput.push(chunk);
+      this.headerBuffer = concatBytes(this.headerBuffer, data);
+      const boundary = findHeaderBoundary(this.headerBuffer);
+      if (boundary < 0) {
+        if (this.headerBuffer.length > MAX_HEADER_BYTES) {
+          this.failed = true;
+        }
+        return;
+      }
+      const headerText = decodeAscii(this.headerBuffer.slice(0, boundary + 4));
+      if (!/^HTTP\/1\.[01] 2\d\d/i.test(headerText)) {
+        this.failed = true;
+        return;
+      }
+      this.headerKnown = true;
+      this.icyMetaint = parseIcyMetaintFromHeaderText(headerText);
+      this.chunked = /transfer-encoding\s*:\s*chunked/i.test(headerText);
+      this.configureStripper();
+      data = this.headerBuffer.slice(boundary + 4);
+      this.headerBuffer = new Uint8Array(0);
+    }
+    if (data.length === 0 || this.icyMetaint <= 0) {
       return;
     }
-    if (this.icyMetaint <= 0) {
-      return;
+    if (this.chunked) {
+      const decoded = this.chunkDecoder.push(data);
+      if (decoded.length > 0) {
+        this.appendCleanAudio(decoded);
+      }
+      if (this.chunkDecoder.isEnded()) {
+        this.ended = true;
+      }
+    } else {
+      this.appendCleanAudio(data);
     }
-    this.appendCleanAudio(chunk);
   }
 
-  private appendCleanAudio(chunk: ArrayBuffer): void {
+  private configureStripper(): void {
+    console.info(`Icecast 兼容流 metaint=${this.icyMetaint}`);
+    if (this.icyMetaint > 0) {
+      this.stripper.configure(this.icyMetaint);
+    }
+  }
+
+  private appendCleanAudio(chunk: Uint8Array): void {
     try {
-      const clean = this.stripper.strip(new Uint8Array(chunk));
+      const clean = this.stripper.strip(chunk);
       if (clean.length === 0) {
         return;
       }

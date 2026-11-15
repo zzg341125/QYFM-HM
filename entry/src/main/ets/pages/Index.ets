@@ -790,6 +790,14 @@ struct Index {
     this.persistSettings();
   }
 
+  private updateIcecastCompatibility(value: boolean): void {
+    const settings = copySettings(this.settings);
+    settings.icecastCompatibility = value;
+    this.settings = settings;
+    this.radio.applySettings(settings);
+    this.persistSettings();
+  }
+
   private async selectTheme(theme: ThemePreset): Promise<void> {
     const settings = copySettings(this.settings);
     settings.themeId = theme.id;
@@ -1066,6 +1074,8 @@ struct Index {
         return this.settings.pauseOnBluetoothDisconnect;
       case 'autoPlayOnBluetoothConnect':
         return this.settings.autoPlayOnBluetoothConnect;
+      case 'icecastCompatibility':
+        return this.settings.icecastCompatibility;
       case 'autoResume':
         return this.settings.autoResume;
       case 'autoUpdate':
@@ -1112,6 +1122,9 @@ struct Index {
         break;
       case 'autoPlayOnBluetoothConnect':
         this.updateAutoPlayOnBluetoothConnect(value);
+        break;
+      case 'icecastCompatibility':
+        this.updateIcecastCompatibility(value);
         break;
       case 'autoResume':
         this.updateAutoResume(value);
@@ -1766,6 +1779,14 @@ struct Index {
           this.SettingsSwitchRow('↗', '编辑流媒体链接', '允许在编辑电台时修改流媒体链接。', 'editStreamUrl')
         }
         ListItem() {
+          this.SettingsSwitchRow(
+            '♫',
+            '旧 MP3 兼容解码',
+            '剥离 Icecast 内嵌元数据后再交给系统解码；若特殊电台异常可关闭。',
+            'icecastCompatibility'
+          )
+        }
+        ListItem() {
           this.SettingsActionRow('⌁', '蓝牙设备识别权限', this.diagnostics, 'bluetoothPermission')
         }
         ListItem() {
@@ -1809,7 +1830,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.18 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.19 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

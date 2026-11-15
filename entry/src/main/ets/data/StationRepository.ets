@@ -97,6 +97,7 @@ export class StationRepository {
           parsed.pauseOnBluetoothDisconnect ?? defaults.pauseOnBluetoothDisconnect,
         autoPlayOnBluetoothConnect:
           parsed.autoPlayOnBluetoothConnect ?? defaults.autoPlayOnBluetoothConnect,
+        icecastCompatibility: parsed.icecastCompatibility ?? defaults.icecastCompatibility,
         lastStationId: parsed.lastStationId ?? defaults.lastStationId,
         webdavUrl: parsed.webdavUrl ?? defaults.webdavUrl,
         webdavUser: parsed.webdavUser ?? defaults.webdavUser,
@@ -135,6 +136,7 @@ export class StationRepository {
       pauseOnUnplug: settings.pauseOnUnplug,
       pauseOnBluetoothDisconnect: settings.pauseOnBluetoothDisconnect,
       autoPlayOnBluetoothConnect: settings.autoPlayOnBluetoothConnect,
+      icecastCompatibility: settings.icecastCompatibility,
       lastStationId: settings.lastStationId,
       webdavUrl: settings.webdavUrl,
       webdavUser: settings.webdavUser,
@@ -143,7 +145,7 @@ export class StationRepository {
     const backup: StationBackup = {
       schemaVersion: BACKUP_SCHEMA_VERSION,
       app: 'QYFM HarmonyOS',
-      appVersion: '1.0.18',
+      appVersion: '1.0.19',
       exportedAt: new Date().toISOString(),
       stationOrder: stationOrder,
       stations: stations.map((station: Station) => copyStation(station)),
@@ -193,6 +195,8 @@ export class StationRepository {
         backup.settings.pauseOnBluetoothDisconnect ?? defaultSettings.pauseOnBluetoothDisconnect;
       defaultSettings.autoPlayOnBluetoothConnect =
         backup.settings.autoPlayOnBluetoothConnect ?? defaultSettings.autoPlayOnBluetoothConnect;
+      defaultSettings.icecastCompatibility =
+        backup.settings.icecastCompatibility ?? defaultSettings.icecastCompatibility;
       defaultSettings.lastStationId = backup.settings.lastStationId ?? defaultSettings.lastStationId;
       defaultSettings.webdavUrl = backup.settings.webdavUrl ?? defaultSettings.webdavUrl;
       defaultSettings.webdavUser = backup.settings.webdavUser ?? defaultSettings.webdavUser;
