@@ -575,8 +575,9 @@ struct Index {
     const fileName = separator >= 0
       ? this.updateDownloadPath.substring(separator + 1)
       : this.updateInfo.assetName;
+    let savedUri = '';
     try {
-      const savedUri = await this.localFiles.saveFileFromPath(
+      savedUri = await this.localFiles.saveFileFromPath(
         this.abilityContext,
         fileName,
         this.updateDownloadPath
@@ -585,12 +586,25 @@ struct Index {
         this.updateStatus = '已取消保存安装包';
         return;
       }
-      await this.updateService.openFileManager(this.abilityContext, savedUri);
-      this.updateStatus = '已保存安装包并打开文件管理器，请点击安装包并在系统中确认';
+      this.updateStatus = '安装包已保存，正在打开系统安装器…';
+      await this.updateService.installUri(this.abilityContext, savedUri, fileName);
+      this.updateStatus = '已打开安装方式选择页，请选择应用安装器并确认安装';
     } catch (error) {
       const businessError = error as BusinessError;
-      this.updateStatus =
-        `安装包已下载，但无法自动打开文件管理器：${businessError.message ?? '未知错误'}`;
+      if (savedUri.length === 0) {
+        this.updateStatus =
+          `保存安装包失败：${businessError.message ?? '未知错误'}`;
+        return;
+      }
+      try {
+        await this.updateService.openFileManager(this.abilityContext, savedUri);
+        this.updateStatus = '安装包已保存，已打开所在文件夹；请点击安装包并在系统中确认';
+      } catch (fileManagerError) {
+        const managerError = fileManagerError as BusinessError;
+        this.updateStatus =
+          `安装包已保存，但安装器和文件管理器均无法打开：${businessError.message ?? '未知错误'}；` +
+          `${managerError.message ?? '未知错误'}`;
+      }
     }
   }
 
@@ -1749,7 +1763,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.16 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.17 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

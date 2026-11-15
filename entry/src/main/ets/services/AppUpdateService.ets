@@ -14,10 +14,11 @@ import {
   extractAppPackage,
   UpdateArchiveFileSystem
 } from '../utils/UpdateArchiveModel';
+import { buildFileManagerTarget } from '../utils/UpdateInstallerModel';
 
 const GITHUB_RELEASES_URL: string =
   'https://api.github.com/repos/zzg341125/QYFM-HM/releases?per_page=30';
-const CURRENT_VERSION: string = '1.0.16';
+const CURRENT_VERSION: string = '1.0.17';
 
 export interface NativeUpdateInfo {
   version: string;
@@ -160,7 +161,11 @@ export class AppUpdateService {
 
   async installHap(context: common.UIAbilityContext, path: string): Promise<void> {
     const uri = fileUri.getUriFromPath(path);
-    const utd = installUtdForFileName(path);
+    await this.installUri(context, uri, path);
+  }
+
+  async installUri(context: common.UIAbilityContext, uri: string, fileName: string): Promise<void> {
+    const utd = installUtdForFileName(fileName);
     if (utd.length === 0) {
       throw new Error('不支持的安装包类型');
     }
@@ -177,14 +182,22 @@ export class AppUpdateService {
   }
 
   async openFileManager(context: common.UIAbilityContext, fileUriValue: string): Promise<void> {
+    let directoryUri = fileUriValue;
+    try {
+      directoryUri = new fileUri.FileUri(fileUriValue).getFullDirectoryUri();
+    } catch (error) {
+      const businessError = error as BusinessError;
+      console.info(`解析安装包目录失败: ${businessError.message ?? '未知错误'}`);
+    }
+    const target = buildFileManagerTarget(directoryUri);
     const want: Want = {
-      bundleName: 'com.ohos.filemanager',
-      abilityName: 'MainAbility',
+      bundleName: target.bundleName,
+      abilityName: target.abilityName,
       action: 'ohos.want.action.viewData',
-      uri: 'filemanager://openDirectory',
+      uri: target.uri,
       flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION,
       parameters: {
-        fileUri: fileUriValue
+        fileUri: target.directoryUri
       }
     };
     await context.startAbility(want);

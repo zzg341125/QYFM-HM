@@ -18,6 +18,7 @@ import {
   shouldResumeAfterForeground
 } from '../utils/PlaybackRecovery';
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
+import { safeSessionArtwork } from '../utils/SessionArtwork';
 
 export interface RadioSnapshot {
   currentStation: Station | undefined;
@@ -33,7 +34,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.16 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.17 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -192,6 +193,11 @@ export class RadioController {
     try {
       await this.ensureSession();
       await this.updateSessionMetadata(playableStation);
+    } catch (error) {
+      const sessionError = error as BusinessError;
+      console.error(`媒体会话初始化失败，不影响电台播放: ${sessionError.message ?? '未知错误'}`);
+    }
+    try {
       await this.backgroundTasks.start(context);
       if (this.settings.autoResume) {
         this.bluetooth.setPlaybackActive(true);
@@ -664,12 +670,21 @@ export class RadioController {
     if (this.session === undefined) {
       return;
     }
-    await this.session.setAVMetadata({
+    const metadata: avSession.AVMetadata = {
       assetId: station.id,
       title: station.name,
-      artist: station.tags,
-      mediaImage: station.iconUrl
-    });
+      artist: station.tags
+    };
+    const artwork = safeSessionArtwork(station.iconUrl);
+    if (artwork.length > 0) {
+      metadata.mediaImage = artwork;
+    }
+    try {
+      await this.session.setAVMetadata(metadata);
+    } catch (error) {
+      const businessError = error as BusinessError;
+      console.error(`锁屏媒体信息更新失败，不影响播放: ${businessError.message ?? '未知错误'}`);
+    }
   }
 
   private async updateSessionPlaybackState(isPlaying: boolean): Promise<void> {

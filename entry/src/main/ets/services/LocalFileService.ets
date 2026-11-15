@@ -4,6 +4,10 @@ import { BusinessError, zlib } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { encodeImageData } from '../utils/Base64Tools';
 import { AndroidBackupLogoEntry } from '../utils/AndroidBackupModel';
+import {
+  copyBinaryFileToDocument,
+  FileDescriptorCopyBridge
+} from '../utils/DocumentFileCopy';
 
 const MAX_BACKUP_BYTES: number = 100 * 1024 * 1024;
 
@@ -123,7 +127,34 @@ export class LocalFileService {
     if (uris.length === 0) {
       return '';
     }
-    fileIo.copyFileSync(sourcePath, uris[0]);
+    const bridge: FileDescriptorCopyBridge = {
+      openRead: (path: string): number => {
+        return fileIo.openSync(path, fileIo.OpenMode.READ_ONLY).fd;
+      },
+      openWrite: (uri: string): number => {
+        return fileIo.openSync(
+          uri,
+          fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+        ).fd;
+      },
+      sizeOf: (fd: number): number => {
+        return fileIo.statSync(fd).size;
+      },
+      read: (fd: number, buffer: ArrayBuffer): number => {
+        return fileIo.readSync(fd, buffer);
+      },
+      write: (fd: number, buffer: ArrayBuffer): void => {
+        fileIo.writeSync(fd, buffer);
+      },
+      close: (fd: number): void => {
+        fileIo.closeSync(fd);
+      }
+    };
+    const sourceSize = fileIo.statSync(sourcePath).size;
+    const copied = copyBinaryFileToDocument(bridge, sourcePath, uris[0]);
+    if (copied !== sourceSize) {
+      throw new Error('安装包复制不完整');
+    }
     return uris[0];
   }
 
