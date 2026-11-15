@@ -28,10 +28,10 @@ export interface PlaybackCandidate {
 export function buildLivePlaybackTuning(fastStart: boolean): LivePlaybackTuning {
   const startWaterline = fastStart ? 0.25 : 0.8;
   return {
-    preferredBufferDuration: 5,
+    preferredBufferDuration: 30,
     preferredBufferDurationForPlaying: startWaterline,
     thresholdForAutoQuickPlay: startWaterline + 2,
-    watchdogTimeoutMs: 6500,
+    watchdogTimeoutMs: 15000,
     maxAutoRetries: 2,
     refreshRetryDelayMs: 600
   };

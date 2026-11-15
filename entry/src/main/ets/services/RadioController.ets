@@ -6,6 +6,7 @@ import { audio } from '@kit.AudioKit';
 import { AppSettings, createDefaultSettings, Station, StreamLine } from '../models/Station';
 import { BackgroundTaskService } from './BackgroundTaskService';
 import { BluetoothResumeCallbacks, BluetoothResumeManager } from './BluetoothResumeManager';
+import { RadioCnResolver } from './RadioCnResolver';
 import { SilentAudioKeepAlive } from './SilentAudioKeepAlive';
 import {
   audioInterruptAction,
@@ -16,6 +17,7 @@ import {
   LivePlaybackTuning,
   shouldResumeAfterForeground
 } from '../utils/PlaybackRecovery';
+import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
 
 export interface RadioSnapshot {
   currentStation: Station | undefined;
@@ -31,7 +33,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.15 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.16 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -61,12 +63,14 @@ export class RadioController {
   private watchdogTimer: number = -1;
   private retryCount: number = 0;
   private candidatePosition: number = 0;
+  private playRequestId: number = 0;
   private currentCandidates: PlaybackCandidate[] = [];
   private buffering: boolean = false;
   private audioInterrupted: boolean = false;
   private tuning: LivePlaybackTuning = buildLivePlaybackTuning(true);
   private backgroundTasks: BackgroundTaskService = new BackgroundTaskService();
   private silentKeepAlive: SilentAudioKeepAlive = new SilentAudioKeepAlive();
+  private radioCnResolver: RadioCnResolver = new RadioCnResolver();
   private bluetooth: BluetoothResumeManager;
 
   private constructor() {
@@ -150,6 +154,7 @@ export class RadioController {
       this.notify();
       return;
     }
+    const requestId = ++this.playRequestId;
     if (this.sleepTimer >= 0) {
       clearTimeout(this.sleepTimer);
       this.sleepTimer = -1;
@@ -162,22 +167,31 @@ export class RadioController {
     this.clearRecoveryTimers();
     this.retryCount = 0;
     this.candidatePosition = 0;
-    this.currentCandidates = buildPlaybackCandidates(station);
     this.tuning = buildLivePlaybackTuning(this.settings.fastStart);
     this.bluetooth.cancelPending();
     await this.silentKeepAlive.stop();
-    this.currentStation = station;
     this.isPlaying = false;
+    this.statusText = `正在准备 ${station.name}`;
+    this.notify();
+    const migratedStation = this.migrateLegacyStation(station);
+    const resolvedStation = await this.radioCnResolver.resolve(migratedStation);
+    if (requestId !== this.playRequestId) {
+      return;
+    }
+    const playableStation = resolvedStation ?? migratedStation;
+    this.currentStation = playableStation;
+    this.currentCandidates = buildPlaybackCandidates(playableStation);
     if (this.currentCandidates.length === 0) {
       this.statusText = '该电台暂无有效音频直播流';
       this.notify();
       return;
     }
-    this.statusText = `正在连接 ${station.name} · ${this.currentCandidates[0].name}`;
+    this.statusText =
+      `正在连接 ${playableStation.name} · ${this.currentCandidates[0].name}`;
     this.notify();
     try {
       await this.ensureSession();
-      await this.updateSessionMetadata(station);
+      await this.updateSessionMetadata(playableStation);
       await this.backgroundTasks.start(context);
       if (this.settings.autoResume) {
         this.bluetooth.setPlaybackActive(true);
@@ -231,6 +245,7 @@ export class RadioController {
   async pause(reason: string, manual: boolean): Promise<void> {
     this.clearRecoveryTimers();
     if (manual) {
+      this.playRequestId++;
       this.pausedByUser = true;
       this.audioInterrupted = false;
       this.bluetooth.cancelPending();
@@ -255,6 +270,7 @@ export class RadioController {
   }
 
   async stop(): Promise<void> {
+    this.playRequestId++;
     this.pausedByUser = true;
     this.audioInterrupted = false;
     this.clearRecoveryTimers();
@@ -359,6 +375,30 @@ export class RadioController {
       this.statusText = `正在连接 ${station.name} · ${candidate.name}`;
       this.notify();
     }
+  }
+
+  private migrateLegacyStation(station: Station): Station {
+    const lines: StreamLine[] | undefined = station.streamLines?.map((line: StreamLine): StreamLine => {
+      return {
+        id: line.id,
+        name: line.name,
+        url: migrateLegacyStreamUrl(line.url),
+        priority: line.priority,
+        isStable: line.isStable
+      };
+    });
+    return {
+      id: station.id,
+      name: station.name,
+      streamUrl: migrateLegacyStreamUrl(station.streamUrl),
+      streamLines: lines,
+      activeLineIndex: station.activeLineIndex ?? 0,
+      iconUrl: station.iconUrl,
+      tags: station.tags,
+      country: station.country,
+      state: station.state,
+      favorite: station.favorite
+    };
   }
 
   private async replacePlayer(candidate: PlaybackCandidate): Promise<void> {

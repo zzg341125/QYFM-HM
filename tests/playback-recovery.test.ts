@@ -7,20 +7,20 @@ import {
   shouldResumeAfterForeground
 } from '../entry/src/main/ets/utils/PlaybackRecovery.ts';
 
-test('uses LX-FM live tuning with a 0.25 second fast start waterline', () => {
+test('uses fast start with segment-safe buffering and watchdog timing', () => {
   assert.deepEqual(buildLivePlaybackTuning(true), {
-    preferredBufferDuration: 5,
+    preferredBufferDuration: 30,
     preferredBufferDurationForPlaying: 0.25,
     thresholdForAutoQuickPlay: 2.25,
-    watchdogTimeoutMs: 6500,
+    watchdogTimeoutMs: 15000,
     maxAutoRetries: 2,
     refreshRetryDelayMs: 600
   });
   assert.deepEqual(buildLivePlaybackTuning(false), {
-    preferredBufferDuration: 5,
+    preferredBufferDuration: 30,
     preferredBufferDurationForPlaying: 0.8,
     thresholdForAutoQuickPlay: 2.8,
-    watchdogTimeoutMs: 6500,
+    watchdogTimeoutMs: 15000,
     maxAutoRetries: 2,
     refreshRetryDelayMs: 600
   });

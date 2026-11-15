@@ -22,10 +22,15 @@ import { StationSearchService } from '../services/StationSearchService';
 import { findTheme, THEME_PRESETS, ThemePreset } from '../models/ThemePreset';
 import { formatSleepTimerEnd, normalizeResumeWindowMinutes } from '../utils/TimeSettings';
 import { moveListItem } from '../utils/ListOrdering';
+import {
+  StationSwipeAction,
+  stationRowTapAction,
+  stationSwipeActions
+} from '../utils/StationInteraction';
 
 const COLOR_DANGER_BG: string = '#E9B7B3';
 const COLOR_DANGER: string = '#B3261E';
-const STATION_SWIPE_ACTION_WIDTH: number = 76;
+const STATION_SWIPE_ACTION_WIDTH: number = 136;
 
 @Entry
 @Component
@@ -1120,31 +1125,43 @@ struct Index {
   }
 
   @Builder
-  StationDeleteAction(id: string) {
-    Column() {
-      if (this.settings.editMode) {
-        Text('删除')
-          .width(56)
-          .height(44)
-          .textAlign(TextAlign.Center)
-          .fontSize(14)
-          .fontColor(COLOR_DANGER)
-          .borderRadius(14)
-          .border({ width: 1, color: COLOR_DANGER })
-          .onClick(() => {
-            const station = this.stations.find((item: Station) => item.id === id);
-            if (station !== undefined) {
+  StationSwipeActions(station: Station) {
+    Row({ space: 6 }) {
+      ForEach(stationSwipeActions(this.settings.editMode), (action: StationSwipeAction) => {
+        if (action === 'edit') {
+          Text('编辑')
+            .width(58)
+            .height(44)
+            .textAlign(TextAlign.Center)
+            .fontSize(14)
+            .fontColor(this.primaryColor())
+            .backgroundColor(this.palette.surface)
+            .borderRadius(14)
+            .border({ width: 1, color: this.primaryColor() })
+            .onClick(() => {
+              this.closeStationSwipe();
+              this.openStationEditor(station);
+            })
+        } else {
+          Text('删除')
+            .width(58)
+            .height(44)
+            .textAlign(TextAlign.Center)
+            .fontSize(14)
+            .fontColor(COLOR_DANGER)
+            .backgroundColor(COLOR_DANGER_BG)
+            .borderRadius(14)
+            .border({ width: 1, color: COLOR_DANGER })
+            .onClick(() => {
               this.pendingDelete = station;
-            }
-          })
-      }
+            })
+        }
+      }, (action: StationSwipeAction) => action)
     }
-    .width(this.settings.editMode ? STATION_SWIPE_ACTION_WIDTH : 0)
+    .width(STATION_SWIPE_ACTION_WIDTH)
     .height(64)
     .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor(COLOR_DANGER_BG)
-    .borderRadius(18)
+    .alignItems(VerticalAlign.Center)
     .margin({ bottom: 18 })
   }
 
@@ -1180,10 +1197,7 @@ struct Index {
         .layoutWeight(1)
         .hitTestBehavior(HitTestMode.Block)
         .onClick(() => {
-          if (this.settings.editMode) {
-            this.closeStationSwipe();
-            this.openStationEditor(station);
-          } else {
+          if (stationRowTapAction(this.settings.editMode) === 'play') {
             this.activateStation(station);
           }
         })
@@ -1227,7 +1241,7 @@ struct Index {
   SwipeableStationItem(station: Station, index: number) {
     Stack({ alignContent: Alignment.End }) {
       if (this.settings.editMode && this.swipedStationId === station.id) {
-        this.StationDeleteAction(station.id)
+        this.StationSwipeActions(station)
       }
       Column() {
         this.StationListItemContent(station, index)
@@ -1702,7 +1716,7 @@ struct Index {
           )
         }
         ListItem() {
-          this.SettingsSwitchRow('✎', '编辑电台', '开启后显示编辑按钮，并支持拖动排序或左滑删除。', 'editMode')
+          this.SettingsSwitchRow('✎', '编辑电台', '开启后左滑显示编辑和删除，长按拖动排序。', 'editMode')
         }
         ListItem() {
           this.SettingsSwitchRow('↗', '编辑流媒体链接', '允许在编辑电台时修改流媒体链接。', 'editStreamUrl')
@@ -1735,7 +1749,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.15 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.16 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
