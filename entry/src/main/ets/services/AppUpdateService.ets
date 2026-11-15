@@ -13,7 +13,7 @@ import {
 
 const GITHUB_RELEASES_URL: string =
   'https://api.github.com/repos/zzg341125/QYFM-HM/releases?per_page=30';
-const CURRENT_VERSION: string = '1.0.11';
+const CURRENT_VERSION: string = '1.0.12';
 
 export interface NativeUpdateInfo {
   version: string;

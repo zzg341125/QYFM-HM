@@ -1165,22 +1165,6 @@ struct Index {
           })
       }
 
-      Text(this.currentStation?.id === station.id && this.isPlaying ? '■' : '▶')
-        .width(44)
-        .height(44)
-        .textAlign(TextAlign.Center)
-        .fontSize(this.currentStation?.id === station.id ? 18 : 22)
-        .fontColor(this.currentStation?.id === station.id ? this.primaryColor() : this.palette.textPrimary)
-        .border({ width: 1.2, color: this.currentStation?.id === station.id ? this.primaryColor() : this.palette.textPrimary })
-        .borderRadius(22)
-        .hitTestBehavior(HitTestMode.Block)
-        .onClick(() => {
-          if (this.currentStation?.id === station.id) {
-            this.togglePlayback();
-          } else {
-            this.playStation(station);
-          }
-        })
     }
     .width('100%')
     .height(100)
@@ -1283,18 +1267,14 @@ struct Index {
       }
       .width('100%')
       Row({ space: 8 }) {
-        ForEach([0, 15, 30, 45, 60], (minutes: number) => {
-          Button(minutes === 0 ? '关闭' : `${minutes} 分`)
-            .layoutWeight(1)
-            .height(44)
-            .fontSize(14)
-            .fontColor(this.sleepTimerMinutes === minutes ? Color.White : this.palette.textPrimary)
-            .backgroundColor(this.sleepTimerMinutes === minutes ? this.primaryColor() : this.palette.surfaceVariant)
-            .borderRadius(22)
-            .onClick(() => {
-              this.radio.setSleepTimer(minutes);
-            })
-        }, (minutes: number) => minutes.toString())
+        this.SleepTimerButton('关闭', 0)
+        this.SleepTimerButton('15 分', 15)
+        this.SleepTimerButton('30 分', 30)
+      }
+      .width('100%')
+      Row({ space: 8 }) {
+        this.SleepTimerButton('45 分', 45)
+        this.SleepTimerButton('60 分', 60)
       }
       .width('100%')
       if (this.sleepTimerMinutes > 0 && this.sleepTimerEndAt > 0) {
@@ -1306,11 +1286,28 @@ struct Index {
           .textAlign(TextAlign.Center)
       }
     }
-    .width('100%')
+    .width('88%')
     .padding(14)
     .borderRadius(26)
     .backgroundColor(this.palette.nowPlaying)
-    .margin({ left: 14, right: 14, bottom: 8 })
+    .shadow({ radius: 26, color: '#33000000', offsetY: 8 })
+  }
+
+  @Builder
+  SleepTimerButton(label: string, minutes: number) {
+    Button(label)
+      .layoutWeight(1)
+      .height(44)
+      .fontSize(14)
+      .fontColor(this.sleepTimerMinutes === minutes ? Color.White : this.palette.textPrimary)
+      .backgroundColor(this.sleepTimerMinutes === minutes
+        ? this.primaryColor()
+        : this.palette.surfaceVariant)
+      .borderRadius(22)
+      .onClick(() => {
+        this.radio.setSleepTimer(minutes);
+        this.showSleepPanel = false;
+      })
   }
 
   @Builder
@@ -1377,7 +1374,7 @@ struct Index {
     .gesture(
       LongPressGesture()
         .onAction(() => {
-          this.showSleepPanel = !this.showSleepPanel;
+          this.showSleepPanel = true;
         })
     )
   }
@@ -1417,9 +1414,6 @@ struct Index {
       .edgeEffect(EdgeEffect.Spring)
       .scrollBar(BarState.Off)
 
-      if (this.showSleepPanel) {
-        this.SleepPanel()
-      }
       this.NowPlayingBar()
     }
     .width('100%')
@@ -1663,7 +1657,7 @@ struct Index {
           this.SettingsSwitchRow('▤', '使用更大缓冲', '使用更大的直播缓冲，重启应用后生效。', 'largeBuffer')
         }
         ListItem() {
-          this.SettingsSwitchRow('✎', '编辑电台', '开启后可长按编辑、拖动排序或左滑删除。', 'editMode')
+          this.SettingsSwitchRow('✎', '编辑电台', '开启后显示编辑按钮，并支持拖动排序或左滑删除。', 'editMode')
         }
         ListItem() {
           this.SettingsSwitchRow('↗', '编辑流媒体链接', '允许在编辑电台时修改流媒体链接。', 'editStreamUrl')
@@ -1696,7 +1690,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.11 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.12 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -2400,6 +2394,17 @@ struct Index {
       if (this.showTheme) {
         Column() {
           this.ThemeDialog()
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#66000000')
+      }
+
+      if (this.showSleepPanel) {
+        Column() {
+          this.SleepPanel()
         }
         .width('100%')
         .height('100%')
