@@ -37,7 +37,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.26 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.27 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -467,7 +467,7 @@ export class RadioController {
     }
     oldRelay?.destroy();
 
-    if (this.settings.ffmpegDecoder && candidate.url !== this.ffmpegFallbackUrl &&
+    if (candidate.url !== this.ffmpegFallbackUrl &&
       FfmpegAudioPlayer.supports(candidate.url) &&
       this.context !== undefined) {
       const ffmpegPlayer = new FfmpegAudioPlayer({

@@ -147,8 +147,13 @@ export class FfmpegAudioPlayer {
     this.callbacks.onState('stopped');
   }
 
-  private codecForUrl(url: string): string {
-    return inferAudioCodecFromUrl(url) ?? 'mp3';
+  private codecForChunk(chunk: Uint8Array): string {
+    const detected = this.relay?.detectedCodec() ?? inferAudioCodecFromUrl(this.sourceUrl);
+    if (detected === 'aac' && chunk.length >= 2 &&
+      chunk[0] === 0x56 && (chunk[1] & 0xe0) === 0xe0) {
+      return 'aac_latm';
+    }
+    return detected ?? 'mp3';
   }
 
   private decodeChunk(chunk: Uint8Array): void {
@@ -157,10 +162,7 @@ export class FfmpegAudioPlayer {
     }
     try {
       if (this.decoderHandle < 0) {
-        const detectedCodec = this.relay?.detectedCodec();
-        this.decoderHandle = ffmpeg.createDecoder(
-          detectedCodec ?? this.codecForUrl(this.sourceUrl)
-        );
+        this.decoderHandle = ffmpeg.createDecoder(this.codecForChunk(chunk));
       }
       const input = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
       const pcm = ffmpeg.decode(this.decoderHandle, input, false);

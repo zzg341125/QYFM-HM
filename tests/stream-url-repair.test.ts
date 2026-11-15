@@ -20,12 +20,27 @@ test('keeps B3 on its continuous MP3 stream for Icecast cleanup', () => {
   );
   assert.equal(
     migrateLegacyStreamUrl('https://lhttp.qtfm.cn/live/4915/64k.mp3?app_id=web'),
-    'https://lhttp.qtfm.cn/live/4915/64k.mp3?app_id=web'
+    'http://lhttp.qtfm.cn/live/4915/64k.mp3?app_id=web'
+  );
+});
+
+test('uses the generic HTTP transport for Qingting MP3 streams', () => {
+  assert.equal(
+    migrateLegacyStreamUrl('https://lhttp.qtfm.cn/live/20500149/64k.mp3'),
+    'http://lhttp.qtfm.cn/live/20500149/64k.mp3'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl('https://lhttp-hw.qtfm.cn/live/1949/64k.mp3'),
+    'http://lhttp-hw.qtfm.cn/live/1949/64k.mp3'
+  );
+  assert.equal(
+    migrateLegacyStreamUrl('https://lhttp.qingting.fm/live/4919/64k.mp3'),
+    'http://lhttp.qingting.fm/live/4919/64k.mp3'
   );
 });
 
 test('keeps unrelated radio URLs unchanged', () => {
-  const url = 'https://lhttp.qtfm.cn/live/1260/64k.mp3';
+  const url = 'https://radio.example/live/128.mp3';
   assert.equal(migrateLegacyStreamUrl(url), url);
 });
 

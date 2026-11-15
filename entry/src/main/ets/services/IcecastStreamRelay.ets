@@ -278,7 +278,7 @@ export class IcecastStreamRelay {
   private buildRequest(endpoint: HttpEndpoint): string {
     return `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.26 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.27 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
@@ -315,7 +315,7 @@ export class IcecastStreamRelay {
       this.ended = true;
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.26 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.27 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };
@@ -349,7 +349,7 @@ export class IcecastStreamRelay {
         return;
       }
       const headerText = decodeAscii(this.headerBuffer.slice(0, boundary + 4));
-      if (!/^HTTP\/1\.[01] 2\d\d/i.test(headerText)) {
+      if (!/^(?:HTTP\/1\.[01]|ICY) 2\d\d/i.test(headerText)) {
         this.failed = true;
         return;
       }

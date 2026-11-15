@@ -153,13 +153,25 @@ bool ReceiveFrames(FfmpegDecoder *decoder, std::vector<uint8_t> &pcm)
 
 bool SendPacket(FfmpegDecoder *decoder, std::vector<uint8_t> &pcm)
 {
-    int ret = avcodec_send_packet(decoder->codecContext, decoder->packet);
-    av_packet_unref(decoder->packet);
-    if (ret < 0 && ret != AVERROR(EAGAIN)) {
-        decoder->lastError = ret;
-        return false;
+    for (int attempt = 0; attempt < 8; attempt++) {
+        int ret = avcodec_send_packet(decoder->codecContext, decoder->packet);
+        if (ret == AVERROR(EAGAIN)) {
+            size_t previousSize = pcm.size();
+            if (!ReceiveFrames(decoder, pcm) || pcm.size() == previousSize) {
+                decoder->lastError = ret;
+                return false;
+            }
+            continue;
+        }
+        av_packet_unref(decoder->packet);
+        if (ret < 0) {
+            decoder->lastError = ret;
+            return false;
+        }
+        return ReceiveFrames(decoder, pcm);
     }
-    return ReceiveFrames(decoder, pcm);
+    decoder->lastError = AVERROR(EAGAIN);
+    return false;
 }
 
 napi_value CreateDecoder(napi_env env, napi_callback_info info)

@@ -1,5 +1,9 @@
 export function migrateLegacyStreamUrl(url: string): string {
   const trimmed = url.trim();
+  if (/^https:\/\/lhttp(?:-hw)?\.qtfm\.cn\//i.test(trimmed) ||
+    /^https:\/\/lhttp\.qingting\.fm\//i.test(trimmed)) {
+    return trimmed.replace(/^https:\/\//i, 'http://');
+  }
   if (/^https?:\/\/radio\.936\.nz:8443\//i.test(trimmed)) {
     return trimmed.replace(
       /^https?:\/\/radio\.936\.nz:8443\//i,
