@@ -10,10 +10,14 @@ import {
   selectInstallAsset,
   UpdateAsset
 } from '../utils/UpdateModel';
+import {
+  extractAppPackage,
+  UpdateArchiveFileSystem
+} from '../utils/UpdateArchiveModel';
 
 const GITHUB_RELEASES_URL: string =
   'https://api.github.com/repos/zzg341125/QYFM-HM/releases?per_page=30';
-const CURRENT_VERSION: string = '1.0.14';
+const CURRENT_VERSION: string = '1.0.15';
 
 export interface NativeUpdateInfo {
   version: string;
@@ -132,13 +136,18 @@ export class AppUpdateService {
       }
       if (fileName.toLowerCase().endsWith('.app.zip')) {
         const outputDir = `${context.filesDir}/qyfm-update-${Date.now()}`;
-        await zlib.decompressFile(path, outputDir);
-        const appFile = fileIo.listFileSync(outputDir)
-          .find((name: string) => name.toLowerCase().endsWith('.app'));
-        if (appFile === undefined) {
-          throw new Error('更新压缩包中没有 APP 安装包');
-        }
-        return `${outputDir}/${appFile}`;
+        const fileSystem: UpdateArchiveFileSystem = {
+          createDirectory: (directory: string): void => {
+            fileIo.mkdirSync(directory, true);
+          },
+          decompress: (zipPath: string, destination: string): Promise<void> => {
+            return zlib.decompressFile(zipPath, destination);
+          },
+          list: (directory: string): string[] => {
+            return fileIo.listFileSync(directory);
+          }
+        };
+        return await extractAppPackage(fileSystem, path, outputDir);
       }
       return path;
     } catch (error) {

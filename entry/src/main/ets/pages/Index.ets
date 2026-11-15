@@ -547,9 +547,9 @@ struct Index {
       return;
     }
     try {
-      this.updateStatus = '正在打开系统安装器…';
+      this.updateStatus = '正在打开系统安装页面…';
       await this.updateService.installHap(this.abilityContext, this.updateDownloadPath);
-      this.updateStatus = '已打开系统安装器，请在手机页面确认安装';
+      this.updateStatus = '已打开安装方式选择页，请选择应用安装器并确认安装';
     } catch (error) {
       const businessError = error as BusinessError;
       this.updateStatus =
@@ -1735,7 +1735,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.14 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.15 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
