@@ -37,7 +37,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.23 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.24 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -188,38 +188,29 @@ export class RadioController {
     this.bluetooth.cancelPending();
     await this.silentKeepAlive.stop();
     this.isPlaying = false;
-    this.statusText = `正在准备 ${station.name}`;
-    this.notify();
     const migratedStation = this.migrateLegacyStation(station);
-    const resolvedStation = await this.radioCnResolver.resolve(migratedStation);
-    console.info(`线路解析完成: ${Date.now() - this.playbackRequestedAt}ms`);
     if (requestId !== this.playRequestId) {
       return;
     }
-    const playableStation = resolvedStation ?? migratedStation;
-    this.currentStation = playableStation;
-    this.currentCandidates = buildPlaybackCandidates(playableStation);
+    this.currentStation = migratedStation;
+    this.currentCandidates = buildPlaybackCandidates(migratedStation);
     if (this.currentCandidates.length === 0) {
       this.statusText = '该电台暂无有效音频直播流';
       this.notify();
       return;
     }
-    this.statusText =
-      `正在连接 ${playableStation.name} · ${this.currentCandidates[0].name}`;
+    this.statusText = migratedStation.name;
     this.notify();
-    try {
-      await this.ensureSession();
-      await this.updateSessionMetadata(playableStation);
-    } catch (error) {
-      const sessionError = error as BusinessError;
-      console.error(`媒体会话初始化失败，不影响电台播放: ${sessionError.message ?? '未知错误'}`);
+    this.prepareSessionInBackground(migratedStation);
+    this.prefetchOfficialStation(migratedStation, requestId);
+    this.backgroundTasks.start(context).catch((error: BusinessError) => {
+      console.error(`启动播放长时任务失败，不影响前台播放: ${error.message ?? '未知错误'}`);
+    });
+    if (this.shouldMonitorBluetooth()) {
+      this.bluetooth.setPlaybackActive(true);
     }
     try {
-      await this.backgroundTasks.start(context);
-      if (this.shouldMonitorBluetooth()) {
-        this.bluetooth.setPlaybackActive(true);
-      }
-      await this.startCandidate(this.currentCandidates[0], false);
+      await this.startCandidate(this.currentCandidates[0]);
     } catch (error) {
       const businessError = error as BusinessError;
       this.handlePlaybackFailure(`播放失败：${businessError.message ?? '未知错误'}`);
@@ -397,7 +388,7 @@ export class RadioController {
     this.notify();
   }
 
-  private async startCandidate(candidate: PlaybackCandidate, isRetry: boolean): Promise<void> {
+  private async startCandidate(candidate: PlaybackCandidate): Promise<void> {
     const station = this.currentStation;
     if (station === undefined) {
       return;
@@ -424,12 +415,9 @@ export class RadioController {
       favorite: station.favorite
     };
     this.currentStation = nextStation;
-    await this.updateSessionMetadata(nextStation);
+    this.statusText = station.name;
+    this.notify();
     await this.replacePlayer(candidate);
-    if (!isRetry) {
-      this.statusText = `正在连接 ${station.name} · ${candidate.name}`;
-      this.notify();
-    }
   }
 
   private migrateLegacyStation(station: Station): Station {
@@ -524,7 +512,9 @@ export class RadioController {
       if (infoType === media.BufferingInfoType.BUFFERING_START) {
         console.info(`直播缓冲开始: ${Date.now() - this.playbackRequestedAt}ms`);
         this.buffering = true;
-        this.scheduleBufferHint();
+        if (this.isPlaying) {
+          this.scheduleBufferHint();
+        }
         this.startWatchdog(player);
       } else if (infoType === media.BufferingInfoType.BUFFERING_END) {
         console.info(`直播缓冲结束: ${Date.now() - this.playbackRequestedAt}ms`);
@@ -639,7 +629,6 @@ export class RadioController {
     console.info(`FFmpeg 播放器状态 ${state}: ${Date.now() - this.playbackRequestedAt}ms`);
     if (state === 'buffering') {
       this.buffering = true;
-      this.scheduleBufferHint();
       this.startFfmpegWatchdog(player);
       return;
     }
@@ -711,7 +700,7 @@ export class RadioController {
       const next = this.currentCandidates[nextPosition];
       this.statusText = `正在无感切换备用线路：${next.name}`;
       this.notify();
-      this.startCandidate(next, true).catch((error: BusinessError) => {
+      this.startCandidate(next).catch((error: BusinessError) => {
         this.handlePlaybackFailure(`备用线路连接失败：${error.message ?? '未知错误'}`);
       });
       return;
@@ -725,7 +714,7 @@ export class RadioController {
       this.notify();
       this.retryTimer = setTimeout(() => {
         this.retryTimer = -1;
-        this.startCandidate(current, true).catch((error: BusinessError) => {
+        this.startCandidate(current).catch((error: BusinessError) => {
           this.handlePlaybackFailure(`自动恢复失败：${error.message ?? '未知错误'}`);
         });
       }, this.tuning.refreshRetryDelayMs);
@@ -804,6 +793,71 @@ export class RadioController {
       clearTimeout(this.retryTimer);
       this.retryTimer = -1;
     }
+  }
+
+  private prepareSessionInBackground(station: Station): void {
+    this.ensureSession()
+      .then((): Promise<void> => {
+        return this.updateSessionMetadata(station);
+      })
+      .then((): Promise<void> => {
+        return this.updateSessionPlaybackState(this.isPlaying);
+      })
+      .catch((error: BusinessError) => {
+        console.error(`媒体会话初始化失败，不影响电台播放: ${error.message ?? '未知错误'}`);
+      });
+  }
+
+  private prefetchOfficialStation(station: Station, requestId: number): void {
+    this.radioCnResolver.resolve(station)
+      .then((resolved: Station | undefined): void => {
+        if (resolved === undefined || requestId !== this.playRequestId) {
+          return;
+        }
+        const active = this.currentStation;
+        if (active === undefined || active.id !== station.id) {
+          return;
+        }
+        const activeUrl = active.streamUrl.trim();
+        const refreshedLines: StreamLine[] = resolved.streamLines ?? [];
+        const lines: StreamLine[] = [
+          {
+            id: 'active-stream',
+            name: '当前在线',
+            url: activeUrl,
+            priority: 0,
+            isStable: true
+          }
+        ];
+        refreshedLines.forEach((line: StreamLine): void => {
+          if (line.url.trim().length > 0 && line.url.trim() !== activeUrl) {
+            lines.push({
+              id: line.id,
+              name: line.name,
+              url: line.url.trim(),
+              priority: lines.length + 1,
+              isStable: line.isStable
+            });
+          }
+        });
+        this.currentStation = {
+          id: active.id,
+          name: active.name,
+          streamUrl: activeUrl,
+          streamLines: lines,
+          activeLineIndex: 0,
+          iconUrl: active.iconUrl.length > 0 ? active.iconUrl : resolved.iconUrl,
+          tags: active.tags.length > 0 ? active.tags : resolved.tags,
+          country: active.country,
+          state: active.state,
+          favorite: active.favorite
+        };
+        this.currentCandidates = buildPlaybackCandidates(this.currentStation);
+        console.info(`官方备用线路已在后台就绪: ${Date.now() - this.playbackRequestedAt}ms`);
+      })
+      .catch((error: BusinessError) => {
+        console.info(`官方线路后台刷新跳过: ${error.message ?? '未知错误'}`);
+      });
   }
 
   private handleAudioInterrupt(event: audio.InterruptEvent): void {
