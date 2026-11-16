@@ -22,6 +22,8 @@ import { StationSearchService } from '../services/StationSearchService';
 import { findTheme, THEME_PRESETS, ThemePreset } from '../models/ThemePreset';
 import { formatSleepTimerEnd, normalizeResumeWindowMinutes } from '../utils/TimeSettings';
 import { moveListItem } from '../utils/ListOrdering';
+import { BackupArchiveService, QyfmBackupArchivePackage } from '../services/BackupArchiveService';
+import { isQyfmBackupPlaylist, parseQyfmBackupArchive } from '../utils/QyfmBackupArchive';
 import {
   StationSwipeAction,
   stationRowTapAction,
@@ -83,6 +85,7 @@ struct Index {
   private localFiles: LocalFileService = new LocalFileService();
   private m3u: M3uPlaylistService = new M3uPlaylistService();
   private searchService: StationSearchService = new StationSearchService();
+  private backupArchives: BackupArchiveService = new BackupArchiveService();
   private abilityContext: common.UIAbilityContext | undefined = undefined;
 
   private readonly snapshotListener: RadioStateListener = (snapshot: RadioSnapshot): void => {
@@ -370,8 +373,22 @@ struct Index {
     this.settingsStatus = '正在上传电台、台标和顺序…';
     try {
       await this.repository.saveSettings(this.settings);
-      const json = this.repository.exportBackup(this.stations, this.settings);
-      const entry = await this.webDav.uploadBackup(this.webDavConfig(), json);
+      if (this.abilityContext === undefined) {
+        throw new Error('应用上下文尚未初始化');
+      }
+      const archive = await this.backupArchives.createArchive(
+        this.abilityContext,
+        this.stations,
+        this.settings,
+        this.settings.webdavFile
+      );
+      const entry = await this.webDav.uploadBackup(
+        this.webDavConfig(),
+        archive.data,
+        archive.exportedAt,
+        archive.stationCount,
+        archive.appVersion
+      );
       this.webDavBackups = await this.webDav.listBackups(this.webDavConfig());
       this.selectedWebDavFile = entry.fileName;
       this.settingsStatus = `备份完成：已生成 ${entry.fileName}`;
@@ -406,9 +423,7 @@ struct Index {
           this.abilityContext,
           data
         );
-        await this.applyAndroidBackupArchive(archive);
-        this.settingsStatus =
-          `已从云端 ZIP 恢复 ${this.stations.length} 个电台、台标和原顺序`;
+        await this.applyBackupArchive(archive, false);
         return;
       }
       const json = await this.webDav.downloadBackup(this.webDavConfig(), this.selectedWebDavFile);
@@ -483,7 +498,10 @@ struct Index {
 
   private webDavEntryDetail(entry: WebDavBackupEntry): string {
     if (isZipBackupFileName(entry.fileName)) {
-      return `Android v1.0.8 ZIP · ${entry.fileName}`;
+      if (entry.appVersion.includes('Android')) {
+        return `旧版 Android v1.0.8 ZIP · ${entry.fileName}`;
+      }
+      return `${entry.stationCount} 个电台 · ZIP · ${entry.fileName}`;
     }
     return `${entry.stationCount} 个电台 · ${entry.fileName}`;
   }
@@ -916,12 +934,18 @@ struct Index {
       return;
     }
     try {
-      await this.localFiles.saveText(
+      const archive: QyfmBackupArchivePackage = await this.backupArchives.createArchive(
         this.abilityContext,
-        'QYFM_电台备份.json',
-        this.repository.exportBackup(this.stations, this.settings)
+        this.stations,
+        this.settings,
+        'qyfm-backup.zip'
       );
-      this.settingsStatus = '本地备份已保存';
+      const uri = await this.localFiles.saveFileFromPath(
+        this.abilityContext,
+        archive.fileName,
+        archive.path
+      );
+      this.settingsStatus = uri.length > 0 ? '本地 ZIP 备份已保存' : '已取消保存备份';
     } catch (error) {
       const businessError = error as BusinessError;
       this.settingsStatus = businessError.message;
@@ -939,11 +963,9 @@ struct Index {
       }
       if (picked.isZip) {
         if (picked.archive === undefined) {
-          throw new Error('无法读取 Android 备份压缩包');
+          throw new Error('无法读取备份压缩包');
         }
-        await this.applyAndroidBackupArchive(picked.archive);
-        this.settingsStatus =
-          `已从 Android ZIP 恢复 ${this.stations.length} 个电台、台标和原顺序`;
+        await this.applyBackupArchive(picked.archive, true);
         return;
       }
       const result = this.repository.parseBackup(picked.text);
@@ -961,6 +983,67 @@ struct Index {
       const businessError = error as BusinessError;
       this.settingsStatus = businessError.message;
     }
+  }
+
+  private async applyBackupArchive(archive: AndroidBackupArchiveFiles, local: boolean): Promise<void> {
+    if (isQyfmBackupPlaylist(archive.qyfmPlaylistText)) {
+      const restored = parseQyfmBackupArchive(
+        archive.qyfmPlaylistText,
+        archive.qyfmOrderText,
+        archive.qyfmSettingsText,
+        archive.logos
+      );
+      this.stations = restored.stations.map((station): Station => {
+        return {
+          id: station.id,
+          name: station.name,
+          streamUrl: station.streamUrl,
+          streamLines: station.streamLines,
+          activeLineIndex: station.activeLineIndex,
+          iconUrl: station.iconUrl,
+          tags: station.tags,
+          country: station.country,
+          state: station.state,
+          favorite: station.favorite
+        };
+      });
+      const settings = copySettings(this.settings);
+      settings.autoUpdate = restored.settings.autoUpdate;
+      settings.autoResume = restored.settings.autoResume;
+      settings.resumeWindowMinutes = restored.settings.resumeWindowMinutes;
+      settings.editMode = restored.settings.editMode;
+      settings.editStreamUrl = restored.settings.editStreamUrl;
+      settings.themeId = restored.settings.themeId;
+      settings.dynamicColor = restored.settings.dynamicColor;
+      settings.transparentUi = restored.settings.transparentUi;
+      settings.clickStationToPlay = restored.settings.clickStationToPlay;
+      settings.autoPlayOnLaunch = restored.settings.autoPlayOnLaunch;
+      settings.playbackMemory = restored.settings.playbackMemory;
+      settings.fastStart = restored.settings.fastStart;
+      settings.largeBuffer = restored.settings.largeBuffer;
+      settings.pauseOnUnplug = restored.settings.pauseOnUnplug;
+      settings.pauseOnBluetoothDisconnect = restored.settings.pauseOnBluetoothDisconnect;
+      settings.autoPlayOnBluetoothConnect = restored.settings.autoPlayOnBluetoothConnect;
+      settings.icecastCompatibility = restored.settings.icecastCompatibility;
+      settings.ffmpegDecoder = restored.settings.ffmpegDecoder;
+      settings.lastStationId = restored.settings.lastStationId;
+      settings.webdavUrl = restored.settings.webdavUrl;
+      settings.webdavUser = restored.settings.webdavUser;
+      settings.webdavFile = restored.settings.webdavFile;
+      this.settings = settings;
+      this.palette = findTheme(this.settings.themeId);
+      this.currentStation = this.stations.length > 0 ? this.stations[0] : undefined;
+      await this.repository.saveStations(this.stations);
+      await this.repository.saveSettings(this.settings);
+      await this.radio.stop();
+      await this.radio.applySettings(this.settings);
+      this.settingsStatus =
+        `${local ? '本地' : '云端'} ZIP 已恢复 ${this.stations.length} 个电台、台标和原顺序`;
+      return;
+    }
+    await this.applyAndroidBackupArchive(archive);
+    this.settingsStatus =
+      `${local ? '本地' : '云端'} v1.0.8 ZIP 已恢复 ${this.stations.length} 个电台、台标和原顺序`;
   }
 
   private async applyAndroidBackupArchive(archive: AndroidBackupArchiveFiles): Promise<void> {
@@ -1047,12 +1130,6 @@ struct Index {
     if (this.abilityContext !== undefined) {
       await this.abilityContext.openLink('https://github.com/zzg341125/QYFM-HM');
     }
-  }
-
-  private async refreshStationIcons(): Promise<void> {
-    this.stations = this.stations.map((station: Station) => copyStation(station));
-    await this.repository.saveStations(this.stations);
-    this.settingsStatus = '电台图标已刷新';
   }
 
   private primaryColor(): string {
@@ -1157,9 +1234,6 @@ struct Index {
     switch (action) {
       case 'theme':
         this.showTheme = true;
-        break;
-      case 'refreshIcons':
-        await this.refreshStationIcons();
         break;
       case 'exportM3u':
         await this.exportM3uFile();
@@ -1742,14 +1816,21 @@ struct Index {
         }
 
         ListItem() {
-          this.SettingsSectionTitle('常规')
+          this.SettingsSectionTitle('外观')
         }
         ListItem() { this.ThemeSettingsRow() }
         ListItem() {
           this.SettingsSwitchRow('◉', '动态颜色', '用户界面元素使用当前主题强调色。', 'dynamicColor')
         }
         ListItem() {
-          this.SettingsSwitchRow('◐', '用户界面透明效果', '播放控件采用半透明背景。', 'transparentUi')
+          this.SettingsSwitchRow('◐', '透明效果', '播放控件采用半透明背景。', 'transparentUi')
+        }
+
+        ListItem() {
+          this.SettingsDivider()
+        }
+        ListItem() {
+          this.SettingsSectionTitle('播放与操作')
         }
         ListItem() {
           this.SettingsSwitchRow('▶', '点击广播电台', '点击电台任意部位开始收听。', 'clickStation')
@@ -1761,30 +1842,10 @@ struct Index {
           this.SettingsSwitchRow('↺', '记忆播放列表与进度', '保存当前列表和最后收听的电台。', 'playbackMemory')
         }
         ListItem() {
-          this.SettingsDivider()
-        }
-
-        ListItem() {
-          this.SettingsSectionTitle('维护')
-        }
-        ListItem() { this.SettingsActionRow('▧', '更新电台图标', '重新加载所有电台的最新图标。', 'refreshIcons') }
-        ListItem() { this.SettingsActionRow('↗', '导出 M3U', '保存为可被其它播放器导入的 M3U 列表。', 'exportM3u') }
-        ListItem() { this.SettingsActionRow('↙', '导入 M3U', '从 M3U / M3U8 播放列表追加电台。', 'importM3u') }
-        ListItem() { this.SettingsActionRow('⇩', '备份电台', '保存包含台标与顺序的本地 JSON 备份。', 'backupLocal') }
-        ListItem() { this.SettingsActionRow('⇧', '恢复电台', '支持 JSON 和 v1.0.8 ZIP（M3U、台标、顺序）。', 'restoreLocal') }
-        ListItem() { this.SettingsActionRow('☁', '在线备份 (WebDAV)', '备份电台、台标、设置与上下顺序。', 'webdav') }
-
-        ListItem() {
-          this.SettingsDivider()
-        }
-        ListItem() {
-          this.SettingsSectionTitle('高级')
-        }
-        ListItem() {
           this.SettingsSwitchRow(
             'ϟ',
             '0.25s 极速起播优化',
-            '采用 LX-FM 的低水位起播策略，下次切台立即生效。',
+            '采用低水位快速起播，下次切台立即生效。',
             'fastStart'
           )
         }
@@ -1798,9 +1859,16 @@ struct Index {
           this.SettingsSwitchRow(
             '♫',
             '旧 MP3 兼容解码',
-            '剥离 Icecast 内嵌元数据后再交给系统解码；若特殊电台异常可关闭。',
+            '剥离 Icecast 内嵌元数据后再交给解码器；特殊电台异常时可关闭。',
             'icecastCompatibility'
           )
+        }
+
+        ListItem() {
+          this.SettingsDivider()
+        }
+        ListItem() {
+          this.SettingsSectionTitle('蓝牙与耳机')
         }
         ListItem() {
           this.SettingsActionRow('⌁', '蓝牙设备识别权限', this.diagnostics, 'bluetoothPermission')
@@ -1812,7 +1880,7 @@ struct Index {
           this.SettingsSwitchRow(
             '⇠',
             '蓝牙断开立即停止',
-            '蓝牙音频断开时停止播放并移除锁屏暂停卡片，不再从手机扬声器继续播放。',
+            '蓝牙音频断开时停止播放并移除锁屏暂停卡片。',
             'pauseOnBluetoothDisconnect'
           )
         }
@@ -1820,7 +1888,7 @@ struct Index {
           this.SettingsSwitchRow(
             '▶',
             '蓝牙连接自动播放',
-            '连接蓝牙音频设备后，自动播放上次收听的电台；应用进程需要在后台保留。',
+            '连接蓝牙音频设备后，自动播放当前或上次收听的电台。',
             'autoPlayOnBluetoothConnect'
           )
         }
@@ -1840,13 +1908,25 @@ struct Index {
             'resumeWindow'
           )
         }
+
         ListItem() {
           this.SettingsDivider()
         }
         ListItem() {
-          this.SettingsSectionTitle('关于')
+          this.SettingsSectionTitle('备份与更新')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.39 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↗', '导出 M3U', '保存为可被其它播放器导入的 M3U 列表。', 'exportM3u') }
+        ListItem() { this.SettingsActionRow('↙', '导入 M3U', '从 M3U / M3U8 播放列表追加电台。', 'importM3u') }
+        ListItem() {
+          this.SettingsActionRow('⇩', '备份到本地', '生成含 M3U、台标、顺序和设置的 ZIP。', 'backupLocal')
+        }
+        ListItem() {
+          this.SettingsActionRow('⇧', '从本地恢复', '恢复 QYFM ZIP 或旧版 v1.0.8 ZIP。', 'restoreLocal')
+        }
+        ListItem() {
+          this.SettingsActionRow('☁', '在线备份 (WebDAV)', 'ZIP 版本备份，可选择任意云端版本恢复。', 'webdav')
+        }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.40 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
@@ -2303,7 +2383,7 @@ struct Index {
           .fontSize(13)
           .fontColor(this.palette.textSecondary)
       }
-      Text('每次上传都会生成独立时间戳备份。版本包含电台、设置、台标和显式播放顺序；WebDAV 密码不会写入备份。')
+      Text('每次上传都会生成独立时间戳 ZIP，内含 M3U、实际台标、显式播放顺序和非敏感设置；WebDAV 密码不会写入备份。')
         .width('100%')
         .fontSize(12)
         .fontColor(this.palette.textSecondary)

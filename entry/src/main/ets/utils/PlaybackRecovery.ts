@@ -126,8 +126,13 @@ export function shouldResumeAfterForeground(
   playerState: string,
   pausedByUser: boolean,
   waitingForBluetooth: boolean,
-  hasStation: boolean
+  hasStation: boolean,
+  stoppedBySleepTimer: boolean = false,
+  autoPlayOnLaunch: boolean = false
 ): boolean {
+  if (stoppedBySleepTimer) {
+    return autoPlayOnLaunch && hasStation && playerState !== 'playing';
+  }
   if (pausedByUser || waitingForBluetooth || !hasStation || playerState === 'playing') {
     return false;
   }

@@ -21,12 +21,14 @@ import {
   shouldAutoPlayOnBluetoothConnect,
   shouldStopForBluetoothDisconnect,
   shouldResumeStoppedBluetooth,
+  shouldResumeAfterForeground,
   shouldRecoverFromBufferStall
 } from '../utils/PlaybackRecovery';
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
 import { safeSessionArtwork } from '../utils/SessionArtwork';
 import { buildDecoderAttemptOrder, DecoderEngine } from '../utils/DecoderSelection';
 import { isHlsPlaylistUrl } from '../utils/HlsPlaylist';
+import { sleepTimerAfterStationSwitch } from '../utils/TimeSettings';
 
 export interface RadioSnapshot {
   currentStation: Station | undefined;
@@ -42,7 +44,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.39 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.40 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -74,6 +76,7 @@ export class RadioController {
   private sleepTimerMinutes: number = 0;
   private sleepTimerEndAt: number = 0;
   private sleepTimer: number = -1;
+  private sleepStoppedByTimer: boolean = false;
   private retryTimer: number = -1;
   private watchdogTimer: number = -1;
   private bufferHintTimer: number = -1;
@@ -188,12 +191,21 @@ export class RadioController {
     if (requestId !== this.playRequestId) {
       return;
     }
-    if (this.sleepTimer >= 0) {
-      clearTimeout(this.sleepTimer);
-      this.sleepTimer = -1;
-      this.sleepTimerMinutes = 0;
-      this.sleepTimerEndAt = 0;
+    const sleepTimer = sleepTimerAfterStationSwitch(
+      this.sleepTimerMinutes,
+      this.sleepTimerEndAt,
+      Date.now()
+    );
+    if (this.sleepTimerEndAt > 0 && sleepTimer.endAt === 0) {
+      await this.stop();
+      this.sleepStoppedByTimer = true;
+      this.statusText = '睡眠定时已结束';
+      this.notify();
+      return;
     }
+    this.sleepTimerMinutes = sleepTimer.minutes;
+    this.sleepTimerEndAt = sleepTimer.endAt;
+    this.sleepStoppedByTimer = false;
     this.waitingForBluetooth = false;
     this.pausedByUser = false;
     this.audioInterrupted = false;
@@ -324,15 +336,27 @@ export class RadioController {
   }
 
   async resumeIfPausedAfterForeground(): Promise<void> {
-    if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted ||
-      this.currentStation === undefined) {
+    if (this.sleepTimerEndAt > 0 && this.sleepTimerEndAt <= Date.now()) {
+      await this.stop();
+      this.sleepStoppedByTimer = true;
+      this.statusText = '睡眠定时已结束';
+    }
+    if (!shouldResumeAfterForeground(
+      this.isPlaying ? 'playing' : 'stopped',
+      this.pausedByUser,
+      this.waitingForBluetooth,
+      this.currentStation !== undefined,
+      this.sleepStoppedByTimer,
+      this.settings.autoPlayOnLaunch
+    )) {
       return;
     }
-    if (this.isPlaying && (this.player !== undefined || this.ffmpegPlayer !== undefined)) {
+    const station = this.currentStation;
+    if (station === undefined) {
       return;
     }
     this.statusText = '返回前台，正在恢复直播';
-    await this.playStation(this.currentStation);
+    await this.playStation(station);
   }
 
   setSleepTimer(minutes: number): void {
@@ -347,7 +371,13 @@ export class RadioController {
         this.sleepTimer = -1;
         this.sleepTimerMinutes = 0;
         this.sleepTimerEndAt = 0;
-        this.pause('睡眠定时已结束', true);
+        this.stop().then((): void => {
+          this.sleepStoppedByTimer = true;
+          this.statusText = '睡眠定时已结束';
+          this.notify();
+        }).catch((error: BusinessError): void => {
+          console.error(`睡眠定时停止播放失败: ${error.message ?? '未知错误'}`);
+        });
       }, minutes * 60 * 1000);
       const end = new Date(this.sleepTimerEndAt);
       const hour = end.getHours().toString().padStart(2, '0');
@@ -355,6 +385,7 @@ export class RadioController {
       this.statusText = `${minutes} 分钟后于 ${hour}:${minute} 停止播放`;
     } else {
       this.sleepTimerEndAt = 0;
+      this.sleepStoppedByTimer = false;
       this.statusText = '睡眠定时已关闭';
     }
     this.notify();

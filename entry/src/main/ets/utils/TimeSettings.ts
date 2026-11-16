@@ -13,3 +13,19 @@ export function formatSleepTimerEnd(now: Date, minutes: number): string {
   const end = new Date(now.getTime() + Math.max(0, minutes) * 60 * 1000);
   return `将于 ${twoDigits(end.getHours())}:${twoDigits(end.getMinutes())} 停止播放`;
 }
+
+export interface SleepTimerState {
+  minutes: number;
+  endAt: number;
+}
+
+export function sleepTimerAfterStationSwitch(
+  minutes: number,
+  endAt: number,
+  now: number
+): SleepTimerState {
+  if (minutes > 0 && endAt > now) {
+    return { minutes: minutes, endAt: endAt };
+  }
+  return { minutes: 0, endAt: 0 };
+}

@@ -10,3 +10,7 @@ export function encodeBasicCredentials(user: string, password: string): string {
 export function encodeImageData(data: ArrayBuffer, mimeType: string): string {
   return `data:${mimeType};base64,${base64.encodeToStringSync(new Uint8Array(data))}`;
 }
+
+export function decodeImageData(value: string): ArrayBuffer {
+  return base64.decodeSync(value).buffer;
+}

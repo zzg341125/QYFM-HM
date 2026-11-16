@@ -16,6 +16,9 @@ export interface AndroidBackupArchiveFiles {
   playlistText: string;
   playlistM3uText: string;
   settingsText: string;
+  qyfmPlaylistText: string;
+  qyfmOrderText: string;
+  qyfmSettingsText: string;
   logos: AndroidBackupLogoEntry[];
 }
 
@@ -227,13 +230,46 @@ export class LocalFileService {
   }
 
   private readExtractedBackup(outputDir: string): AndroidBackupArchiveFiles {
+    const root = this.findBackupRoot(outputDir);
     return {
-      manifestText: this.readOptionalText(`${outputDir}/manifest.json`),
-      playlistText: this.readOptionalText(`${outputDir}/playlist.json`),
-      playlistM3uText: this.readOptionalText(`${outputDir}/playlist.m3u`),
-      settingsText: this.readOptionalText(`${outputDir}/settings.json`),
-      logos: this.readBackupLogos(`${outputDir}/logos`)
+      manifestText: this.readOptionalText(`${root}/manifest.json`),
+      playlistText: this.readOptionalText(`${root}/playlist.json`),
+      playlistM3uText: this.readOptionalText(`${root}/playlist.m3u`),
+      settingsText: this.readOptionalText(`${root}/settings.json`),
+      qyfmPlaylistText: this.readOptionalText(`${root}/playlist.m3u`),
+      qyfmOrderText: this.readOptionalText(`${root}/order.txt`),
+      qyfmSettingsText: this.readOptionalText(`${root}/settings.properties`),
+      logos: this.readBackupLogos(`${root}/logos`)
     };
+  }
+
+  private findBackupRoot(outputDir: string): string {
+    if (this.readOptionalText(`${outputDir}/playlist.m3u`).length > 0 ||
+      this.readOptionalText(`${outputDir}/manifest.json`).length > 0 ||
+      this.readOptionalText(`${outputDir}/playlist.json`).length > 0) {
+      return outputDir;
+    }
+    try {
+      const entries = fileIo.listFileSync(outputDir);
+      for (const name of entries) {
+        const candidate = `${outputDir}/${name}`;
+        try {
+          if (!fileIo.statSync(candidate).isDirectory()) {
+            continue;
+          }
+        } catch (error) {
+          continue;
+        }
+        if (this.readOptionalText(`${candidate}/playlist.m3u`).length > 0 ||
+          this.readOptionalText(`${candidate}/manifest.json`).length > 0 ||
+          this.readOptionalText(`${candidate}/playlist.json`).length > 0) {
+          return candidate;
+        }
+      }
+    } catch (error) {
+      console.info('备份压缩包目录结构无法读取');
+    }
+    return outputDir;
   }
 
   private readOptionalText(path: string): string {

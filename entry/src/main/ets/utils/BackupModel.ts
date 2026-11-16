@@ -1,5 +1,6 @@
 export const WEBDAV_MANIFEST_SCHEMA_VERSION: number = 1;
 export const WEBDAV_MANIFEST_SUFFIX: string = '-versions.json';
+export const WEBDAV_INDEX_SUFFIX: string = '-versions.txt';
 export const WEBDAV_BACKUP_LIMIT: number = 100;
 
 export interface WebDavBackupEntry {
@@ -71,6 +72,10 @@ export function backupManifestFileName(configuredFileName: string): string {
   return `${backupFilePrefix(configuredFileName)}${WEBDAV_MANIFEST_SUFFIX}`;
 }
 
+export function backupIndexFileName(configuredFileName: string): string {
+  return `${backupFilePrefix(configuredFileName)}${WEBDAV_INDEX_SUFFIX}`;
+}
+
 function twoDigits(value: number): string {
   return value.toString().padStart(2, '0');
 }
@@ -83,17 +88,75 @@ export function formatBackupTimestamp(date: Date): string {
 }
 
 export function buildVersionedBackupFileName(configuredFileName: string, date: Date): string {
-  return `${backupFilePrefix(configuredFileName)}-${formatBackupTimestamp(date)}.json`;
+  return `${backupFilePrefix(configuredFileName)}-${formatBackupTimestamp(date)}.zip`;
 }
 
 function isValidBackupEntry(entry: WebDavBackupEntry): boolean {
   return typeof entry.fileName === 'string' &&
-    entry.fileName.endsWith('.json') &&
+    (entry.fileName.endsWith('.zip') || entry.fileName.endsWith('.json')) &&
     !entry.fileName.startsWith('/') &&
     !entry.fileName.includes('..') &&
     !entry.fileName.includes('/') &&
     typeof entry.exportedAt === 'string' &&
     entry.exportedAt.length > 0;
+}
+
+function encodeIndexValue(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function decodeIndexValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    return value;
+  }
+}
+
+export function buildWebDavBackupIndex(entries: WebDavBackupEntry[]): string {
+  const lines: string[] = ['QYFM-BACKUP-INDEX\t1'];
+  entries.forEach((entry: WebDavBackupEntry) => {
+    if (!isValidBackupEntry(entry)) {
+      return;
+    }
+    lines.push([
+      encodeIndexValue(entry.fileName),
+      encodeIndexValue(entry.exportedAt),
+      entry.stationCount.toString(),
+      encodeIndexValue(entry.appVersion)
+    ].join('\t'));
+  });
+  return `${lines.join('\n')}\n`;
+}
+
+export function parseWebDavBackupIndex(text: string): WebDavBackupEntry[] {
+  const lines = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+  if (lines.length === 0 || lines[0].trim() !== 'QYFM-BACKUP-INDEX\t1') {
+    throw new Error('无法解析 WebDAV 备份版本索引');
+  }
+  const entries: WebDavBackupEntry[] = [];
+  lines.slice(1).forEach((line: string) => {
+    if (line.trim().length === 0) {
+      return;
+    }
+    const parts = line.split('\t');
+    if (parts.length !== 4) {
+      return;
+    }
+    const entry: WebDavBackupEntry = {
+      fileName: decodeIndexValue(parts[0]),
+      exportedAt: decodeIndexValue(parts[1]),
+      stationCount: Number(parts[2]),
+      appVersion: decodeIndexValue(parts[3])
+    };
+    if (isValidBackupEntry(entry) && Number.isFinite(entry.stationCount)) {
+      entries.push(entry);
+    }
+  });
+  return entries
+    .sort((left: WebDavBackupEntry, right: WebDavBackupEntry) =>
+      right.exportedAt.localeCompare(left.exportedAt))
+    .slice(0, WEBDAV_BACKUP_LIMIT);
 }
 
 export function parseWebDavBackupManifest(text: string): WebDavBackupManifest {

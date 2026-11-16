@@ -79,14 +79,16 @@ test('resumes after a temporary audio interruption but not after a user pause', 
 });
 
 test('resumes an interrupted live stream on foreground but respects manual pause', () => {
-  assert.equal(shouldResumeAfterForeground('paused', false, false, true), true);
-  assert.equal(shouldResumeAfterForeground('prepared', false, false, true), true);
-  assert.equal(shouldResumeAfterForeground('error', false, false, true), true);
-  assert.equal(shouldResumeAfterForeground('idle', false, false, true), true);
-  assert.equal(shouldResumeAfterForeground('playing', false, false, true), false);
-  assert.equal(shouldResumeAfterForeground('paused', true, false, true), false);
-  assert.equal(shouldResumeAfterForeground('paused', false, true, true), false);
-  assert.equal(shouldResumeAfterForeground('paused', false, false, false), false);
+  assert.equal(shouldResumeAfterForeground('paused', false, false, true, false, false), true);
+  assert.equal(shouldResumeAfterForeground('prepared', false, false, true, false, false), true);
+  assert.equal(shouldResumeAfterForeground('error', false, false, true, false, false), true);
+  assert.equal(shouldResumeAfterForeground('idle', false, false, true, false, false), true);
+  assert.equal(shouldResumeAfterForeground('playing', false, false, true, false, false), false);
+  assert.equal(shouldResumeAfterForeground('paused', true, false, true, false, false), false);
+  assert.equal(shouldResumeAfterForeground('paused', false, true, true, false, false), false);
+  assert.equal(shouldResumeAfterForeground('paused', false, false, false, false, false), false);
+  assert.equal(shouldResumeAfterForeground('stopped', true, false, true, true, true), true);
+  assert.equal(shouldResumeAfterForeground('stopped', true, false, true, true, false), false);
 });
 
 test('starts the remembered station on Bluetooth connect only when playback is idle', () => {

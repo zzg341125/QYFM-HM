@@ -103,7 +103,7 @@ export class StationRepository {
         webdavUrl: parsed.webdavUrl ?? defaults.webdavUrl,
         webdavUser: parsed.webdavUser ?? defaults.webdavUser,
         webdavPassword: parsed.webdavPassword ?? defaults.webdavPassword,
-        webdavFile: parsed.webdavFile ?? defaults.webdavFile
+        webdavFile: (parsed.webdavFile ?? defaults.webdavFile).replace(/\.[^.]+$/, '.zip')
       };
     } catch (error) {
       const businessError = error as BusinessError;
@@ -147,7 +147,7 @@ export class StationRepository {
     const backup: StationBackup = {
       schemaVersion: BACKUP_SCHEMA_VERSION,
       app: 'QYFM HarmonyOS',
-      appVersion: '1.0.39',
+      appVersion: '1.0.40',
       exportedAt: new Date().toISOString(),
       stationOrder: stationOrder,
       stations: stations.map((station: Station) => copyStation(station)),

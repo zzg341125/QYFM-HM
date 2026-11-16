@@ -109,7 +109,7 @@ export function createDefaultSettings(): AppSettings {
     webdavUrl: '',
     webdavUser: '',
     webdavPassword: '',
-    webdavFile: 'qyfm-backup.json'
+    webdavFile: 'qyfm-backup.zip'
   };
 }
 

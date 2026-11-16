@@ -4,10 +4,12 @@ import {
   backupDirectoryUrl,
   buildRemoteBackupFileUrl,
   buildVersionedBackupFileName,
+  buildWebDavBackupIndex,
   buildRemoteFileUrl,
   isZipBackupFileName,
   mergeWebDavBackupEntries,
   orderStationsByBackup,
+  parseWebDavBackupIndex,
   parseWebDavBackupManifest
 } from '../entry/src/main/ets/utils/BackupModel.ts';
 
@@ -17,7 +19,21 @@ test('creates a UTC timestamped backup name instead of overwriting one file', ()
     new Date('2026-11-14T01:02:03.004Z')
   );
 
-  assert.equal(fileName, 'qyfm-backup-20261114-010203-004.json');
+  assert.equal(fileName, 'qyfm-backup-20261114-010203-004.zip');
+});
+
+test('stores the cloud version list as text instead of JSON', () => {
+  const entries = [
+    {
+      fileName: 'qyfm-backup-20261114-010203-004.zip',
+      exportedAt: '2026-11-14T01:02:03.004Z',
+      stationCount: 35,
+      appVersion: '1.0.40'
+    }
+  ];
+  const text = buildWebDavBackupIndex(entries);
+  assert.equal(text.startsWith('{'), false);
+  assert.deepEqual(parseWebDavBackupIndex(text), entries);
 });
 
 test('turns a legacy JSON URL into its containing WebDAV directory', () => {

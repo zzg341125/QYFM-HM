@@ -4,20 +4,20 @@ import { encodeBasicCredentials } from '../utils/Base64Tools';
 import {
   backupDirectoryUrl,
   backupFilePrefix,
+  backupIndexFileName,
   backupManifestFileName,
   buildRemoteBackupFileUrl,
   buildRemoteFileUrl,
   buildVersionedBackupFileName,
+  buildWebDavBackupIndex,
   isZipBackupFileName,
   mergeWebDavBackupEntries,
+  parseWebDavBackupIndex,
   parseWebDavBackupManifest,
-  serializeWebDavBackupManifest,
-  WEBDAV_MANIFEST_SCHEMA_VERSION,
   WebDavBackupEntry,
-  WebDavBackupManifest
 } from '../utils/BackupModel';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.39';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.40';
 
 export interface WebDavConfig {
   baseUrl: string;
@@ -36,6 +36,10 @@ interface WebDavHeaders {
 interface WebDavTextResponse {
   code: number;
   text: string;
+}
+
+interface WebDavIndexData {
+  backups: WebDavBackupEntry[];
 }
 
 interface BackupMetadata {
@@ -74,8 +78,12 @@ function describeHttpFailure(code: number, prefix: string): Error {
   return new Error(`${prefix}：HTTP ${code}${hint}`);
 }
 
-function manifestUrl(config: WebDavConfig): string {
+function legacyManifestUrl(config: WebDavConfig): string {
   return buildRemoteFileUrl(config.baseUrl, backupManifestFileName(config.fileName));
+}
+
+function indexUrl(config: WebDavConfig): string {
+  return buildRemoteFileUrl(config.baseUrl, backupIndexFileName(config.fileName));
 }
 
 function legacyFileName(config: WebDavConfig): string {
@@ -102,27 +110,34 @@ export class WebDavBackupService {
     }
   }
 
-  async uploadBackup(config: WebDavConfig, json: string): Promise<WebDavBackupEntry> {
-    const metadata = JSON.parse(json) as BackupMetadata;
-    const exportedAt = typeof metadata.exportedAt === 'string' && metadata.exportedAt.length > 0
-      ? metadata.exportedAt
-      : new Date().toISOString();
+  async uploadBackup(
+    config: WebDavConfig,
+    data: ArrayBuffer,
+    exportedAt: string,
+    stationCount: number,
+    appVersion: string
+  ): Promise<WebDavBackupEntry> {
     const fileName = buildVersionedBackupFileName(config.fileName, new Date(exportedAt));
-    await this.putText(config, buildRemoteFileUrl(config.baseUrl, fileName), json, '云端备份失败');
-
     const entry: WebDavBackupEntry = {
       fileName: fileName,
       exportedAt: exportedAt,
-      stationCount: Array.isArray(metadata.stations) ? metadata.stations.length : 0,
-      appVersion: typeof metadata.appVersion === 'string' ? metadata.appVersion : ''
+      stationCount: stationCount,
+      appVersion: appVersion
     };
+    await this.putBinary(
+      config,
+      buildRemoteFileUrl(config.baseUrl, fileName),
+      data,
+      '云端 ZIP 备份失败'
+    );
     const manifest = await this.loadManifest(config);
     const entries = mergeWebDavBackupEntries(manifest.backups, entry);
     await this.putText(
       config,
-      manifestUrl(config),
-      serializeWebDavBackupManifest(entries),
-      '云端版本列表更新失败'
+      indexUrl(config),
+      buildWebDavBackupIndex(entries),
+      '云端版本索引更新失败',
+      'text/plain; charset=utf-8'
     );
     return entry;
   }
@@ -210,32 +225,68 @@ export class WebDavBackupService {
     }
   }
 
-  private async loadManifest(config: WebDavConfig): Promise<WebDavBackupManifest> {
-    const response = await this.getText(config, manifestUrl(config), true);
-    if (response.code === 404) {
-      return { schemaVersion: WEBDAV_MANIFEST_SCHEMA_VERSION, backups: [] };
+  private async loadManifest(config: WebDavConfig): Promise<WebDavIndexData> {
+    const indexResponse = await this.getText(config, indexUrl(config), true);
+    if (indexResponse.code === 200) {
+      return { backups: parseWebDavBackupIndex(indexResponse.text) };
     }
-    if (response.code !== 200) {
-      throw describeHttpFailure(response.code, '读取云端版本列表失败');
+    if (indexResponse.code !== 404) {
+      throw describeHttpFailure(indexResponse.code, '读取云端版本索引失败');
     }
-    return parseWebDavBackupManifest(response.text);
+    const legacyResponse = await this.getText(config, legacyManifestUrl(config), true);
+    if (legacyResponse.code === 404) {
+      return { backups: [] };
+    }
+    if (legacyResponse.code !== 200) {
+      throw describeHttpFailure(legacyResponse.code, '读取旧版云端版本列表失败');
+    }
+    return { backups: parseWebDavBackupManifest(legacyResponse.text).backups };
   }
 
   private async putText(
     config: WebDavConfig,
     url: string,
     text: string,
+    failurePrefix: string,
+    contentType: string = 'text/plain; charset=utf-8'
+  ): Promise<void> {
+    const request = http.createHttp();
+    try {
+      const response = await request.request(url, {
+        method: http.RequestMethod.PUT,
+        header: buildHeaders(config, contentType),
+        extraData: text,
+        connectTimeout: 20000,
+        readTimeout: 120000,
+        maxLimit: 50 * 1024 * 1024,
+        expectDataType: http.HttpDataType.STRING
+      });
+      if (response.responseCode !== 200 && response.responseCode !== 201 && response.responseCode !== 204) {
+        throw describeHttpFailure(response.responseCode, failurePrefix);
+      }
+    } catch (error) {
+      const businessError = error as BusinessError;
+      throw new Error(businessError.message ?? `${failurePrefix}：未知错误`);
+    } finally {
+      request.destroy();
+    }
+  }
+
+  private async putBinary(
+    config: WebDavConfig,
+    url: string,
+    data: ArrayBuffer,
     failurePrefix: string
   ): Promise<void> {
     const request = http.createHttp();
     try {
       const response = await request.request(url, {
         method: http.RequestMethod.PUT,
-        header: buildHeaders(config, 'application/json; charset=utf-8'),
-        extraData: text,
+        header: buildHeaders(config, 'application/zip'),
+        extraData: data,
         connectTimeout: 20000,
         readTimeout: 120000,
-        maxLimit: 50 * 1024 * 1024,
+        maxLimit: 100 * 1024 * 1024,
         expectDataType: http.HttpDataType.STRING
       });
       if (response.responseCode !== 200 && response.responseCode !== 201 && response.responseCode !== 204) {
