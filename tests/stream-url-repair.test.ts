@@ -107,3 +107,10 @@ test('uses the verified HTTP Icecast endpoint for the US Mandarin station', () =
     'http://video1.getstreamhosting.com:8292/stream?.mp3'
   );
 });
+
+test('migrates the retired Chuzhou news HLS entry to its live AAC mirror', () => {
+  assert.equal(
+    migrateLegacyStreamUrl('http://live.cztv.cc:85/live/xwgb.m3u8'),
+    'https://live.ximalaya.com/radio-first-page-app/live/154/64.m3u8'
+  );
+});

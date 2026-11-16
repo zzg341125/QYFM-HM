@@ -7,6 +7,8 @@ import {
   buildOfficialStreamUrls,
   inferRadioCnProvinceCode,
   matchRadioCnStation,
+  radioCnRequestTimeouts,
+  shouldReuseRadioCnCatalog,
   shouldResolveRadioCnStation
 } from '../utils/RadioCnMatch';
 
@@ -14,8 +16,6 @@ const API_BASE: string = 'https://ytmsout.radio.cn/web';
 const SIGN_KEY: string = 'f0fc4c668392f9f9a447e48584c214ee';
 const USER_AGENT: string =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const CACHE_TTL_MS: number = 60 * 60 * 1000;
-
 interface RadioCnBroadcast {
   contentId: string;
   title: string;
@@ -113,7 +113,7 @@ export class RadioCnResolver {
 
   private async loadStations(provinceCode: number): Promise<RadioCnBroadcast[]> {
     const cached = this.cache.get(provinceCode);
-    if (cached !== undefined && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    if (cached !== undefined && shouldReuseRadioCnCatalog(cached.fetchedAt, Date.now())) {
       return cached.stations;
     }
     const timestamp = Date.now().toString();
@@ -122,11 +122,12 @@ export class RadioCnResolver {
     try {
       const url =
         `${API_BASE}/appBroadcast/list?categoryId=0&provinceCode=${provinceCode}`;
+      const timeouts = radioCnRequestTimeouts();
       const response = await request.request(url, {
         method: http.RequestMethod.GET,
         header: new RadioCnRequestHeaders(sign, timestamp),
-        connectTimeout: 1000,
-        readTimeout: 1500,
+        connectTimeout: timeouts.connectTimeoutMs,
+        readTimeout: timeouts.readTimeoutMs,
         expectDataType: http.HttpDataType.STRING,
         usingCache: false
       });

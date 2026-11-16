@@ -4,7 +4,7 @@ export interface HlsMediaPlaylist {
 }
 
 export function hlsInitialSegmentCount(targetDurationSeconds: number): number {
-  return targetDurationSeconds > 0 && targetDurationSeconds <= 3 ? 2 : 1;
+  return targetDurationSeconds > 0 ? 2 : 1;
 }
 
 export type HlsSegmentData = ArrayBuffer | Uint8Array;

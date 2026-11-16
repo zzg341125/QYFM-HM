@@ -296,7 +296,7 @@ export class IcecastStreamRelay {
   private buildRequest(endpoint: HttpEndpoint): string {
     return `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.38 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.39 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
@@ -333,7 +333,7 @@ export class IcecastStreamRelay {
       this.handleConnectionEnded('HTTP 数据流已结束');
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.38 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.39 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };

@@ -173,3 +173,20 @@ export function buildOfficialStreamUrls(
   });
   return urls;
 }
+
+export interface RadioCnRequestTimeouts {
+  connectTimeoutMs: number;
+  readTimeoutMs: number;
+}
+
+export function radioCnRequestTimeouts(): RadioCnRequestTimeouts {
+  return {
+    connectTimeoutMs: 6000,
+    readTimeoutMs: 8000
+  };
+}
+
+export function shouldReuseRadioCnCatalog(fetchedAt: number, now: number): boolean {
+  const age = now - fetchedAt;
+  return age >= 0 && age < 30000;
+}

@@ -5,6 +5,8 @@ import {
   inferRadioCnProvinceCode,
   matchRadioCnStation,
   mergeOfficialStreamUrls,
+  radioCnRequestTimeouts,
+  shouldReuseRadioCnCatalog,
   shouldResolveRadioCnStation
 } from '../entry/src/main/ets/utils/RadioCnMatch.ts';
 
@@ -66,4 +68,16 @@ test('retains all official stream variants before the imported public URL', () =
       'https://old.example/live.m3u8'
     ]
   );
+});
+
+test('allows the official catalog enough time to return during busy live playback', () => {
+  const timeouts = radioCnRequestTimeouts();
+  assert.ok(timeouts.connectTimeoutMs >= 5000);
+  assert.ok(timeouts.readTimeoutMs >= 8000);
+});
+
+test('does not reuse official catalog responses after their signed URLs age out', () => {
+  assert.equal(shouldReuseRadioCnCatalog(1000, 30999), true);
+  assert.equal(shouldReuseRadioCnCatalog(1000, 31000), false);
+  assert.equal(shouldReuseRadioCnCatalog(31000, 1000), false);
 });

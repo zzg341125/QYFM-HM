@@ -1,5 +1,8 @@
 export function migrateLegacyStreamUrl(url: string): string {
   const trimmed = url.trim();
+  if (/^https?:\/\/live\.cztv\.cc:85\/live\/xwgb\.m3u8(?:[/?#].*)?$/i.test(trimmed)) {
+    return 'https://live.ximalaya.com/radio-first-page-app/live/154/64.m3u8';
+  }
   if (/^https:\/\/lhttp(?:-hw)?\.qtfm\.cn\//i.test(trimmed) ||
     /^https:\/\/lhttp\.qingting\.fm\//i.test(trimmed)) {
     return trimmed.replace(/^https:\/\//i, 'http://');

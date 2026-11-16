@@ -129,10 +129,10 @@ test('uses the playlist as Referer when fetching protected AAC segments', () => 
   assert.equal(hlsRequestReferer('segment', master, media), media);
 });
 
-test('preloads two short HLS segments but keeps one long segment', () => {
+test('preloads two HLS segments across short and long target durations', () => {
   assert.equal(hlsInitialSegmentCount(2), 2);
   assert.equal(hlsInitialSegmentCount(3), 2);
-  assert.equal(hlsInitialSegmentCount(7), 1);
+  assert.equal(hlsInitialSegmentCount(7), 2);
 });
 
 test('keeps a successful HLS segment when an older prefetched segment expired', () => {
