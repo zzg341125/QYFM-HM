@@ -20,11 +20,11 @@ import {
   sessionPlaybackMode,
   shouldAutoPlayOnBluetoothConnect,
   shouldStopForBluetoothDisconnect,
-  shouldResumeStoppedBluetooth,
-  shouldResumeAfterForeground
+  shouldResumeStoppedBluetooth
 } from '../utils/PlaybackRecovery';
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
 import { safeSessionArtwork } from '../utils/SessionArtwork';
+import { buildDecoderAttemptOrder, DecoderEngine } from '../utils/DecoderSelection';
 
 export interface RadioSnapshot {
   currentStation: Station | undefined;
@@ -40,7 +40,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.33 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.34 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -55,7 +55,8 @@ export class RadioController {
   private context: common.UIAbilityContext | undefined = undefined;
   private player: media.AVPlayer | undefined = undefined;
   private ffmpegPlayer: FfmpegAudioPlayer | undefined = undefined;
-  private ffmpegFallbackUrl: string = '';
+  private activeDecoderEngine: DecoderEngine | undefined = undefined;
+  private decoderAttemptsTried: Set<string> = new Set<string>();
   private icyRelay: IcecastStreamRelay | undefined = undefined;
   private session: avSession.AVSession | undefined = undefined;
   private sessionActive: boolean = false;
@@ -168,7 +169,7 @@ export class RadioController {
 
   async playStation(station: Station): Promise<void> {
     this.playbackRequestedAt = Date.now();
-    this.ffmpegFallbackUrl = '';
+    this.decoderAttemptsTried.clear();
     console.info(`起播计时开始: ${station.name}`);
     const context = this.context;
     if (context === undefined) {
@@ -244,36 +245,14 @@ export class RadioController {
     if (this.currentStation === undefined) {
       return;
     }
-    const player = this.player;
-    const ffmpegPlayer = this.ffmpegPlayer;
     this.clearRecoveryTimers();
-    if (ffmpegPlayer !== undefined) {
-      try {
-        this.waitingForBluetooth = false;
-        this.pausedByUser = false;
-        this.audioInterrupted = false;
-        await ffmpegPlayer.resume();
-        this.statusText = reason;
-        this.notify();
-      } catch (error) {
-        const businessError = error as BusinessError;
-        this.statusText = `继续播放失败：${businessError.message ?? '未知错误'}`;
-        this.notify();
-      }
-      return;
-    }
-    if (player === undefined || (player.state !== 'paused' && player.state !== 'prepared')) {
-      await this.playStation(this.currentStation);
-      return;
-    }
+    this.waitingForBluetooth = false;
+    this.pausedByUser = false;
+    this.audioInterrupted = false;
+    this.statusText = reason;
+    this.notify();
     try {
-      this.waitingForBluetooth = false;
-      this.pausedByUser = false;
-      this.audioInterrupted = false;
-      await player.play();
-      this.startWatchdog(player);
-      this.statusText = reason;
-      this.notify();
+      await this.playStation(this.currentStation);
     } catch (error) {
       const businessError = error as BusinessError;
       this.statusText = `继续播放失败：${businessError.message ?? '未知错误'}`;
@@ -289,21 +268,13 @@ export class RadioController {
       this.audioInterrupted = false;
       this.bluetooth.cancelPending();
       this.bluetooth.setPlaybackActive(false);
-      if (this.context !== undefined) {
-        await this.backgroundTasks.stop(this.context);
-      }
     }
-    try {
-      if (this.ffmpegPlayer !== undefined) {
-        await this.ffmpegPlayer.pause();
-      } else if (this.player !== undefined && this.player.state === 'playing') {
-        await this.player.pause();
-      }
-    } catch (error) {
-      const businessError = error as BusinessError;
-      console.error(`暂停失败: ${businessError.message}`);
+    await this.releaseActivePlayers(false);
+    if (manual && this.context !== undefined) {
+      await this.backgroundTasks.stop(this.context);
     }
     this.isPlaying = false;
+    this.buffering = false;
     this.waitingForBluetooth = !manual && this.settings.autoResume;
     this.statusText = reason;
     await this.updateSessionPlaybackState(false).catch((error: BusinessError): void => {
@@ -330,16 +301,7 @@ export class RadioController {
       this.sleepTimerMinutes = 0;
       this.sleepTimerEndAt = 0;
     }
-    if (this.player !== undefined) {
-      await this.player.release();
-      this.player = undefined;
-    }
-    if (this.ffmpegPlayer !== undefined) {
-      await this.ffmpegPlayer.release();
-      this.ffmpegPlayer = undefined;
-    }
-    this.icyRelay?.destroy();
-    this.icyRelay = undefined;
+    await this.releaseActivePlayers(false);
     if (this.context !== undefined) {
       await this.backgroundTasks.stop(this.context);
     }
@@ -357,20 +319,7 @@ export class RadioController {
       this.currentStation === undefined) {
       return;
     }
-    if (this.ffmpegPlayer !== undefined) {
-      if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
-        return;
-      }
-      await this.ffmpegPlayer.resume();
-      return;
-    }
-    const player = this.player;
-    const state = player === undefined ? 'idle' : player.state;
-    if (!shouldResumeAfterForeground(state, this.pausedByUser, this.waitingForBluetooth, true)) {
-      return;
-    }
-    if (state === 'paused' || state === 'prepared') {
-      await this.resume('返回前台，继续播放');
+    if (this.isPlaying && (this.player !== undefined || this.ffmpegPlayer !== undefined)) {
       return;
     }
     this.statusText = '返回前台，正在恢复直播';
@@ -429,9 +378,10 @@ export class RadioController {
       favorite: station.favorite
     };
     this.currentStation = nextStation;
+    this.decoderAttemptsTried.clear();
     this.statusText = station.name;
     this.notify();
-    await this.replacePlayer(candidate);
+    await this.replacePlayer(candidate, undefined, this.playRequestId);
   }
 
   private migrateLegacyStation(station: Station): Station {
@@ -458,51 +408,96 @@ export class RadioController {
     };
   }
 
-  private async replacePlayer(candidate: PlaybackCandidate): Promise<void> {
+  private decoderAttemptKey(url: string, engine: DecoderEngine): string {
+    return `${url}\n${engine}`;
+  }
+
+  private async replacePlayer(
+    candidate: PlaybackCandidate,
+    forcedEngine?: DecoderEngine,
+    requestId: number = this.playRequestId
+  ): Promise<void> {
     console.info(`准备播放线路: ${candidate.url}`);
     this.clearRecoveryTimers();
     this.buffering = true;
-    const oldPlayer = this.player;
-    const oldFfmpegPlayer = this.ffmpegPlayer;
-    const oldRelay = this.icyRelay;
-    this.player = undefined;
-    this.ffmpegPlayer = undefined;
-    this.icyRelay = undefined;
-    if (oldPlayer !== undefined) {
-      try {
-        await oldPlayer.release();
-      } catch (error) {
-        const businessError = error as BusinessError;
-        console.error(`旧播放器释放失败: ${businessError.message}`);
+    await this.releaseActivePlayers(true);
+    if (requestId !== this.playRequestId) {
+      throw new Error('播放请求已取消');
+    }
+    const context = this.context;
+    if (context === undefined) {
+      throw new Error('应用尚未完成初始化');
+    }
+    const attempts = buildDecoderAttemptOrder(
+      candidate.url,
+      FfmpegAudioPlayer.supports(candidate.url)
+    );
+    const orderedAttempts = forcedEngine === undefined
+      ? attempts
+      : attempts.filter((engine: DecoderEngine): boolean => engine === forcedEngine);
+    let lastError: Error | undefined = undefined;
+    for (const engine of orderedAttempts) {
+      const key = this.decoderAttemptKey(candidate.url, engine);
+      if (this.decoderAttemptsTried.has(key)) {
+        continue;
       }
-    }
-    if (oldFfmpegPlayer !== undefined) {
-      await oldFfmpegPlayer.releaseForSwitch();
-    }
-    oldRelay?.destroy();
-
-    if (candidate.url !== this.ffmpegFallbackUrl &&
-      FfmpegAudioPlayer.supports(candidate.url) &&
-      this.context !== undefined) {
-      const ffmpegPlayer = new FfmpegAudioPlayer({
-        onState: (state: FfmpegPlayerState, message?: string): void => {
-          this.handleFfmpegPlayerState(ffmpegPlayer, state, message);
-        }
-      });
-      this.ffmpegPlayer = ffmpegPlayer;
+      this.decoderAttemptsTried.add(key);
+      this.activeDecoderEngine = engine;
       try {
-        await ffmpegPlayer.start(this.context, candidate.url);
+        if (engine === 'ffmpeg') {
+          await this.startFfmpegAttempt(context, candidate.url, requestId);
+        } else {
+          await this.startNativeAttempt(candidate.url, requestId);
+        }
         return;
       } catch (error) {
-        if (this.ffmpegPlayer === ffmpegPlayer) {
-          this.ffmpegPlayer = undefined;
+        const caught = error as Error;
+        lastError = caught;
+        if (requestId !== this.playRequestId) {
+          throw caught;
         }
-        const businessError = error as BusinessError;
-        console.error(`独立 FFmpeg 播放失败: ${businessError.message ?? '未知错误'}`);
+        await this.releaseActivePlayers(true);
+        console.error(`解码后端 ${engine} 启动失败: ${caught.message ?? '未知错误'}`);
       }
     }
+    throw lastError ?? new Error('没有可用的音频解码后端');
+  }
 
+  private async startFfmpegAttempt(
+    context: common.UIAbilityContext,
+    url: string,
+    requestId: number
+  ): Promise<void> {
+    const ffmpegPlayer = new FfmpegAudioPlayer({
+      onState: (state: FfmpegPlayerState, message?: string): void => {
+        this.handleFfmpegPlayerState(ffmpegPlayer, state, message);
+      }
+    });
+    this.ffmpegPlayer = ffmpegPlayer;
+    try {
+      await ffmpegPlayer.start(context, url, this.settings.fastStart);
+      if (requestId !== this.playRequestId || this.ffmpegPlayer !== ffmpegPlayer) {
+        await ffmpegPlayer.release();
+        throw new Error('播放请求已取消');
+      }
+    } catch (error) {
+      if (this.ffmpegPlayer === ffmpegPlayer) {
+        this.ffmpegPlayer = undefined;
+      }
+      await ffmpegPlayer.release().catch((releaseError: BusinessError): void => {
+        console.error(`释放失败的 FFmpeg 播放器失败: ${releaseError.message ?? '未知错误'}`);
+      });
+      const caught = error as Error;
+      throw caught;
+    }
+  }
+
+  private async startNativeAttempt(url: string, requestId: number): Promise<void> {
     const player = await media.createAVPlayer();
+    if (requestId !== this.playRequestId) {
+      await player.release();
+      throw new Error('播放请求已取消');
+    }
     this.player = player;
     player.on('stateChange', (state: string) => {
       if (this.player !== player) {
@@ -543,38 +538,74 @@ export class RadioController {
       }
       this.handleAudioInterrupt(event);
     });
-    if (this.settings.icecastCompatibility && IcecastStreamRelay.supports(candidate.url) &&
-      this.context !== undefined) {
+    const context = this.context;
+    if (this.settings.icecastCompatibility && IcecastStreamRelay.supports(url) &&
+      context !== undefined) {
       const relay = new IcecastStreamRelay();
       try {
         const relaySource = await relay.prepare(
-          this.context,
-          candidate.url,
+          context,
+          url,
           this.settings.fastStart
         );
-        if (relaySource !== undefined && this.player === player) {
+        if (relaySource !== undefined && this.player === player &&
+          requestId === this.playRequestId) {
           this.icyRelay = relay;
           player.dataSrc = relaySource;
         } else {
           relay.destroy();
-          await this.setUrlMediaSource(player, candidate.url);
+          await this.setUrlMediaSource(player, url);
         }
       } catch (error) {
         relay.destroy();
         const businessError = error as BusinessError;
         console.error(`Icecast 兼容模式失败，改用系统直连: ${businessError.message ?? '未知错误'}`);
-        await this.setUrlMediaSource(player, candidate.url);
+        await this.setUrlMediaSource(player, url);
       }
     } else {
-      await this.setUrlMediaSource(player, candidate.url);
+      await this.setUrlMediaSource(player, url);
+    }
+    if (requestId !== this.playRequestId || this.player !== player) {
+      await player.release();
+      throw new Error('播放请求已取消');
     }
     this.startWatchdog(player);
+  }
+
+  private async releaseActivePlayers(fastSwitch: boolean): Promise<void> {
+    const player = this.player;
+    const ffmpegPlayer = this.ffmpegPlayer;
+    const relay = this.icyRelay;
+    this.player = undefined;
+    this.ffmpegPlayer = undefined;
+    this.icyRelay = undefined;
+    this.activeDecoderEngine = undefined;
+    relay?.destroy();
+    if (player !== undefined) {
+      try {
+        await player.release();
+      } catch (error) {
+        const businessError = error as BusinessError;
+        console.error(`释放原生播放器失败: ${businessError.message ?? '未知错误'}`);
+      }
+    }
+    if (ffmpegPlayer !== undefined) {
+      try {
+        if (fastSwitch) {
+          await ffmpegPlayer.releaseForSwitch();
+        } else {
+          await ffmpegPlayer.release();
+        }
+      } catch (error) {
+        const businessError = error as BusinessError;
+        console.error(`释放 FFmpeg 播放器失败: ${businessError.message ?? '未知错误'}`);
+      }
+    }
   }
 
   private async setUrlMediaSource(player: media.AVPlayer, url: string): Promise<void> {
     const headers: Record<string, string> = {
       'User-Agent': LIVE_USER_AGENT,
-      'Icy-MetaData': '1',
       'Accept': '*/*'
     };
     const source = media.createMediaSourceWithUrl(url, headers);
@@ -674,7 +705,6 @@ export class RadioController {
       return;
     }
     if (state === 'error') {
-      this.ffmpegFallbackUrl = this.currentStation?.streamUrl ?? '';
       this.handlePlaybackFailure(`独立 FFmpeg 播放失败：${message ?? '未知错误'}`);
     }
   }
@@ -704,33 +734,35 @@ export class RadioController {
     this.clearRecoveryTimers();
     this.buffering = false;
     this.isPlaying = false;
-    const brokenPlayer = failedPlayer ?? this.player;
-    if (brokenPlayer !== undefined && this.player === brokenPlayer) {
-      this.player = undefined;
-      try {
-        await brokenPlayer.release();
-      } catch (error) {
-        const businessError = error as BusinessError;
-        console.error(`释放故障播放器失败: ${businessError.message ?? '未知错误'}`);
-      }
-    }
-    const brokenFfmpeg = this.ffmpegPlayer;
-    if (brokenFfmpeg !== undefined) {
-      this.ffmpegPlayer = undefined;
-      try {
-        await brokenFfmpeg.releaseForSwitch();
-      } catch (error) {
-        const businessError = error as BusinessError;
-        console.error(`释放 FFmpeg 播放器失败: ${businessError.message ?? '未知错误'}`);
-      }
-    }
-    this.icyRelay?.destroy();
-    this.icyRelay = undefined;
+    await this.releaseActivePlayers(true);
     await this.updateSessionPlaybackState(false).catch((error: BusinessError): void => {
       console.error(`更新媒体停止状态失败: ${error.message}`);
     });
     if (requestId !== this.playRequestId || this.currentStation === undefined ||
       this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
+      return;
+    }
+
+    const currentLine = this.currentCandidates[this.candidatePosition];
+    const fallbackEngine = buildDecoderAttemptOrder(
+      currentLine.url,
+      FfmpegAudioPlayer.supports(currentLine.url)
+    ).find((engine: DecoderEngine): boolean => {
+      return !this.decoderAttemptsTried.has(this.decoderAttemptKey(currentLine.url, engine));
+    });
+    if (fallbackEngine !== undefined) {
+      this.statusText = fallbackEngine === 'ffmpeg'
+        ? '系统播放不稳定，正在切换兼容解码'
+        : '兼容解码失败，正在切换系统播放';
+      this.notify();
+      try {
+        await this.replacePlayer(currentLine, fallbackEngine, requestId);
+      } catch (error) {
+        const businessError = error as BusinessError;
+        await this.recoverPlaybackFailure(
+          `同线路切换解码失败：${businessError.message ?? '未知错误'}`
+        );
+      }
       return;
     }
 
@@ -943,15 +975,7 @@ export class RadioController {
     this.buffering = false;
     this.isPlaying = false;
     this.clearWatchdog();
-    const player = this.player;
-    try {
-      if (player !== undefined && player.state === 'playing') {
-        await player.pause();
-      }
-    } catch (error) {
-      const businessError = error as BusinessError;
-      console.error(`音频中断暂停失败: ${businessError.message}`);
-    }
+    await this.releaseActivePlayers(false);
     await this.updateSessionPlaybackState(false);
     this.statusText = '音频暂时被其他应用占用，中断结束后自动续播';
     this.notify();

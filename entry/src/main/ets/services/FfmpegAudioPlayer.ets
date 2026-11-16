@@ -3,7 +3,12 @@ import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import ffmpeg from 'libqyfm_ffmpeg.so';
 import { AudioPcmQueue, AudioPcmQueueReader } from '../utils/AudioPcmQueue';
-import { shouldPrimeDecoder, shouldReconnectAfterPause } from '../utils/FfmpegDecodePolicy';
+import {
+  pcmStartWatermark,
+  shouldPrimeDecoder,
+  shouldReconnectAfterPause,
+  shouldStartPcmRenderer
+} from '../utils/FfmpegDecodePolicy';
 import { inferAudioCodecFromUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
 import { shouldUseManagedHlsReader } from '../utils/HlsPlaylist';
 import { HlsStreamReader } from './HlsStreamReader';
@@ -39,6 +44,7 @@ export class FfmpegAudioPlayer {
   private paused: boolean = false;
   private interrupted: boolean = false;
   private stopped: boolean = false;
+  private fastStart: boolean = true;
 
   private readonly audioInterruptListener = (event: audio.InterruptEvent): void => {
     const begin = event.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN;
@@ -77,13 +83,18 @@ export class FfmpegAudioPlayer {
     return isProgressiveAudioUrl(url) || shouldUseManagedHlsReader(url);
   }
 
-  async start(context: common.UIAbilityContext, url: string): Promise<void> {
+  async start(
+    context: common.UIAbilityContext,
+    url: string,
+    fastStart: boolean = true
+  ): Promise<void> {
     this.context = context;
     this.releaseTask = undefined;
     this.outputStopTask = undefined;
     this.stoppingRenderer = undefined;
     this.stopped = false;
     this.paused = false;
+    this.fastStart = fastStart;
     this.sourceUrl = url;
     this.callbacks.onState('buffering');
     if (shouldUseManagedHlsReader(url)) {
@@ -129,7 +140,7 @@ export class FfmpegAudioPlayer {
       }
       const context = this.context;
       if (context !== undefined && this.sourceUrl.length > 0) {
-        await this.start(context, this.sourceUrl);
+        await this.start(context, this.sourceUrl, this.fastStart);
       }
       return;
     }
@@ -292,7 +303,11 @@ export class FfmpegAudioPlayer {
   private handleDecodedPcm(pcm: ArrayBuffer): void {
     try {
       this.pcmQueue.enqueue(pcm);
-      if (this.renderer === undefined && !this.creatingRenderer) {
+      if (this.renderer === undefined && !this.creatingRenderer &&
+        shouldStartPcmRenderer(this.fastStart, this.pcmQueue.byteLength)) {
+        console.info(
+          `FFmpeg PCM 安全水位已满足: ${this.pcmQueue.byteLength}/${pcmStartWatermark(this.fastStart)} 字节`
+        );
         const task = this.createRenderer(this.decoderHandle).catch((error: BusinessError) => {
           this.callbacks.onState('error', error.message ?? 'AudioRenderer 启动失败');
         });
