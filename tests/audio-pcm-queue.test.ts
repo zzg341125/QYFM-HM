@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   AudioPcmQueue,
-  buildPcmWriteChunkSize
+  AudioPcmQueueReader
 } from '../entry/src/main/ets/utils/AudioPcmQueue.ts';
 
 function pcm(value: number): ArrayBuffer {
@@ -34,7 +34,16 @@ test('keeps the newest PCM from a decode buffer larger than the whole budget', (
   );
 });
 
-test('writes PCM in small continuous frames instead of one-second bursts', () => {
-  assert.equal(buildPcmWriteChunkSize(48000, 2, 4, 20), 7680);
-  assert.equal(buildPcmWriteChunkSize(44100, 1, 2, 20), 1764);
+test('fills exact renderer buffers across queued PCM blocks', () => {
+  const queue = new AudioPcmQueue(8);
+  queue.enqueue(new Uint8Array([1, 2, 3]).buffer);
+  queue.enqueue(new Uint8Array([4, 5, 6]).buffer);
+  const reader = new AudioPcmQueueReader(queue);
+  const first = new Uint8Array(4);
+  const second = new Uint8Array(4);
+
+  assert.equal(reader.readInto(first), 4);
+  assert.deepEqual(Array.from(first), [1, 2, 3, 4]);
+  assert.equal(reader.readInto(second), 2);
+  assert.deepEqual(Array.from(second), [5, 6, 0, 0]);
 });

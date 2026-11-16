@@ -48,13 +48,42 @@ export class AudioPcmQueue {
   }
 }
 
-export function buildPcmWriteChunkSize(
-  sampleRate: number,
-  channels: number,
-  bytesPerSample: number,
-  durationMs: number
-): number {
-  const frameBytes = Math.max(1, channels * bytesPerSample);
-  const requested = Math.floor(sampleRate * frameBytes * durationMs / 1000);
-  return Math.max(frameBytes, requested - (requested % frameBytes));
+export class AudioPcmQueueReader {
+  private readonly queue: AudioPcmQueue;
+  private current: Uint8Array | undefined = undefined;
+  private offset: number = 0;
+
+  constructor(queue: AudioPcmQueue) {
+    this.queue = queue;
+  }
+
+  readInto(destination: Uint8Array): number {
+    let written = 0;
+    while (written < destination.length) {
+      if (this.current === undefined || this.offset >= this.current.length) {
+        const next = this.queue.dequeue();
+        if (next === undefined) {
+          break;
+        }
+        this.current = new Uint8Array(next);
+        this.offset = 0;
+      }
+      const count = Math.min(
+        destination.length - written,
+        this.current.length - this.offset
+      );
+      destination.set(this.current.subarray(this.offset, this.offset + count), written);
+      this.offset += count;
+      written += count;
+    }
+    if (written < destination.length) {
+      destination.fill(0, written);
+    }
+    return written;
+  }
+
+  reset(): void {
+    this.current = undefined;
+    this.offset = 0;
+  }
 }

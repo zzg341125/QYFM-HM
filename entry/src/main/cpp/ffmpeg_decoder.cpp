@@ -34,6 +34,16 @@ struct FfmpegDecoder {
     int lastError = 0;
 };
 
+struct AsyncDecodeRequest {
+    napi_async_work work = nullptr;
+    napi_deferred deferred = nullptr;
+    FfmpegDecoder *decoder = nullptr;
+    std::vector<uint8_t> input;
+    std::vector<uint8_t> pcm;
+    bool flush = false;
+    int error = 0;
+};
+
 bool IsValid(FfmpegDecoder *decoder)
 {
     return decoder != nullptr && decoder->magic == kDecoderMagic;
@@ -177,6 +187,51 @@ bool SendPacket(FfmpegDecoder *decoder, std::vector<uint8_t> &pcm)
     return false;
 }
 
+bool DecodeData(
+    FfmpegDecoder *decoder,
+    const uint8_t *data,
+    size_t inputSize,
+    bool flush,
+    std::vector<uint8_t> &pcm
+)
+{
+    size_t remaining = inputSize;
+    if (!flush) {
+        while (remaining > 0) {
+            int consumed = av_parser_parse2(
+                decoder->parser,
+                decoder->codecContext,
+                &decoder->packet->data,
+                &decoder->packet->size,
+                data,
+                static_cast<int>(remaining),
+                AV_NOPTS_VALUE,
+                AV_NOPTS_VALUE,
+                0
+            );
+            if (consumed < 0) {
+                decoder->lastError = consumed;
+                return false;
+            }
+            data += consumed;
+            remaining -= static_cast<size_t>(consumed);
+            if (decoder->packet->size > 0 && !SendPacket(decoder, pcm)) {
+                return false;
+            }
+            if (consumed == 0) {
+                break;
+            }
+        }
+        return true;
+    }
+    int ret = avcodec_send_packet(decoder->codecContext, nullptr);
+    if (ret < 0 && ret != AVERROR_EOF) {
+        decoder->lastError = ret;
+        return false;
+    }
+    return ReceiveFrames(decoder, pcm);
+}
+
 napi_value CreateDecoder(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
@@ -258,51 +313,15 @@ napi_value Decode(napi_env env, napi_callback_info info)
         napi_get_value_bool(env, args[2], &flush);
     }
 
-    std::vector<uint8_t> pcm;
     const uint8_t *data = static_cast<const uint8_t *>(input);
-    size_t remaining = inputSize;
-    if (!flush) {
-        while (remaining > 0) {
-            int consumed = av_parser_parse2(
-                decoder->parser,
-                decoder->codecContext,
-                &decoder->packet->data,
-                &decoder->packet->size,
-                data,
-                static_cast<int>(remaining),
-                AV_NOPTS_VALUE,
-                AV_NOPTS_VALUE,
-                0
-            );
-            if (consumed < 0) {
-                decoder->lastError = consumed;
-                SetNamedError(env, "PARSE_FAILED", "FFmpeg parser failed: " + ErrorText(consumed));
-                return nullptr;
-            }
-            data += consumed;
-            remaining -= static_cast<size_t>(consumed);
-            if (decoder->packet->size > 0 && !SendPacket(decoder, pcm)) {
-                SetNamedError(
-                    env,
-                    "DECODE_FAILED",
-                    "FFmpeg decode failed: " + ErrorText(decoder->lastError)
-                );
-                return nullptr;
-            }
-            if (consumed == 0) {
-                break;
-            }
-        }
-    } else {
-        avcodec_send_packet(decoder->codecContext, nullptr);
-        if (!ReceiveFrames(decoder, pcm)) {
-            SetNamedError(
-                env,
-                "DECODE_FAILED",
-                "FFmpeg flush failed: " + ErrorText(decoder->lastError)
-            );
-            return nullptr;
-        }
+    std::vector<uint8_t> pcm;
+    if (!DecodeData(decoder, data, inputSize, flush, pcm)) {
+        SetNamedError(
+            env,
+            "DECODE_FAILED",
+            "FFmpeg decode failed: " + ErrorText(decoder->lastError)
+        );
+        return nullptr;
     }
 
     napi_value result;
@@ -312,6 +331,110 @@ napi_value Decode(napi_env env, napi_callback_info info)
         std::memcpy(outputData, pcm.data(), pcm.size());
     }
     return result;
+}
+
+void ExecuteDecode(napi_env env, void *data)
+{
+    (void)env;
+    auto *request = static_cast<AsyncDecodeRequest *>(data);
+    if (!DecodeData(
+        request->decoder,
+        request->input.data(),
+        request->input.size(),
+        request->flush,
+        request->pcm
+    )) {
+        request->error = request->decoder->lastError;
+    }
+}
+
+void CompleteDecode(napi_env env, napi_status status, void *data)
+{
+    auto *request = static_cast<AsyncDecodeRequest *>(data);
+    if (status != napi_ok || request->error < 0) {
+        napi_value message;
+        const std::string text = status != napi_ok
+            ? "FFmpeg async work cancelled"
+            : "FFmpeg decode failed: " + ErrorText(request->error);
+        napi_create_string_utf8(env, text.c_str(), NAPI_AUTO_LENGTH, &message);
+        napi_value error;
+        napi_create_error(env, nullptr, message, &error);
+        napi_reject_deferred(env, request->deferred, error);
+    } else {
+        napi_value result;
+        void *outputData = nullptr;
+        napi_create_arraybuffer(env, request->pcm.size(), &outputData, &result);
+        if (!request->pcm.empty()) {
+            std::memcpy(outputData, request->pcm.data(), request->pcm.size());
+        }
+        napi_resolve_deferred(env, request->deferred, result);
+    }
+    napi_delete_async_work(env, request->work);
+    delete request;
+}
+
+napi_value DecodeAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 3;
+    napi_value args[3] = {};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    FfmpegDecoder *decoder = nullptr;
+    if (argc < 2 || !ReadHandle(env, args[0], &decoder)) {
+        SetNamedError(env, "INVALID_HANDLE", "Invalid FFmpeg decoder handle");
+        return nullptr;
+    }
+
+    void *input = nullptr;
+    size_t inputSize = 0;
+    if (napi_get_arraybuffer_info(env, args[1], &input, &inputSize) != napi_ok) {
+        SetNamedError(env, "INVALID_INPUT", "Decoder input must be an ArrayBuffer");
+        return nullptr;
+    }
+    bool flush = false;
+    if (argc > 2) {
+        napi_get_value_bool(env, args[2], &flush);
+    }
+
+    auto *request = new AsyncDecodeRequest();
+    request->decoder = decoder;
+    request->flush = flush;
+    if (inputSize > 0) {
+        const auto *bytes = static_cast<const uint8_t *>(input);
+        request->input.assign(bytes, bytes + inputSize);
+    }
+    napi_value promise;
+    napi_create_promise(env, &request->deferred, &promise);
+    napi_value resourceName;
+    napi_create_string_utf8(env, "QyfmFfmpegDecode", NAPI_AUTO_LENGTH, &resourceName);
+    napi_status workStatus = napi_create_async_work(
+        env,
+        nullptr,
+        resourceName,
+        ExecuteDecode,
+        CompleteDecode,
+        request,
+        &request->work
+    );
+    if (workStatus != napi_ok) {
+        napi_value message;
+        napi_value error;
+        napi_create_string_utf8(env, "Unable to create FFmpeg async work", NAPI_AUTO_LENGTH, &message);
+        napi_create_error(env, nullptr, message, &error);
+        napi_reject_deferred(env, request->deferred, error);
+        delete request;
+        return promise;
+    }
+    workStatus = napi_queue_async_work(env, request->work);
+    if (workStatus != napi_ok) {
+        napi_delete_async_work(env, request->work);
+        napi_value message;
+        napi_value error;
+        napi_create_string_utf8(env, "Unable to queue FFmpeg async work", NAPI_AUTO_LENGTH, &message);
+        napi_create_error(env, nullptr, message, &error);
+        napi_reject_deferred(env, request->deferred, error);
+        delete request;
+    }
+    return promise;
 }
 
 napi_value LastError(napi_env env, napi_callback_info info)
@@ -371,6 +494,7 @@ napi_value Init(napi_env env, napi_value exports)
     napi_property_descriptor descriptors[] = {
         {"createDecoder", nullptr, CreateDecoder, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"decode", nullptr, Decode, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"decodeAsync", nullptr, DecodeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"destroyDecoder", nullptr, DestroyDecoder, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"lastError", nullptr, LastError, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"outputSampleRate", nullptr, OutputSampleRate, nullptr, nullptr, nullptr, napi_default, nullptr},

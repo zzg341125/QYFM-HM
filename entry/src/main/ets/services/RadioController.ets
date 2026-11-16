@@ -40,7 +40,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.30 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.32 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -477,7 +477,7 @@ export class RadioController {
       }
     }
     if (oldFfmpegPlayer !== undefined) {
-      await oldFfmpegPlayer.release();
+      await oldFfmpegPlayer.releaseForSwitch();
     }
     oldRelay?.destroy();
 
@@ -718,7 +718,7 @@ export class RadioController {
     if (brokenFfmpeg !== undefined) {
       this.ffmpegPlayer = undefined;
       try {
-        await brokenFfmpeg.release();
+        await brokenFfmpeg.releaseForSwitch();
       } catch (error) {
         const businessError = error as BusinessError;
         console.error(`释放 FFmpeg 播放器失败: ${businessError.message ?? '未知错误'}`);

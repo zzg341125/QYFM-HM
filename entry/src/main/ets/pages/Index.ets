@@ -149,13 +149,16 @@ struct Index {
 
   private async playStation(station: Station): Promise<void> {
     this.currentStation = station;
+    const playbackTask = this.radio.playStation(station);
     if (this.settings.playbackMemory) {
       const settings = copySettings(this.settings);
       settings.lastStationId = station.id;
       this.settings = settings;
-      await this.repository.saveSettings(settings);
+      this.repository.saveSettings(settings).catch((error: BusinessError) => {
+        console.error(`保存最后电台失败: ${error.message ?? '未知错误'}`);
+      });
     }
-    await this.radio.playStation(station);
+    await playbackTask;
   }
 
   private activateStation(station: Station): void {
@@ -1843,7 +1846,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.30 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.32 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
