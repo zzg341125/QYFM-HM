@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  detectHlsSegmentCodec,
+  hlsInitialSegmentCount,
   hlsRequestReferer,
+  hasUsableHlsSegments,
   isHlsPlaylistUrl,
   parseHlsMediaPlaylist,
   parseHlsVariantUrl,
@@ -124,4 +127,27 @@ test('uses the playlist as Referer when fetching protected AAC segments', () => 
   const media = 'https://wowza1.ner.gov.tw/TPFM/1/chunklist_w1.m3u8';
   assert.equal(hlsRequestReferer('playlist', master, media), master);
   assert.equal(hlsRequestReferer('segment', master, media), media);
+});
+
+test('preloads two short HLS segments but keeps one long segment', () => {
+  assert.equal(hlsInitialSegmentCount(2), 2);
+  assert.equal(hlsInitialSegmentCount(3), 2);
+  assert.equal(hlsInitialSegmentCount(7), 1);
+});
+
+test('keeps a successful HLS segment when an older prefetched segment expired', () => {
+  const newer = new Uint8Array([1, 2, 3]);
+  assert.equal(hasUsableHlsSegments([undefined, newer]), true);
+  assert.equal(hasUsableHlsSegments([new Uint8Array(0), newer]), true);
+  assert.equal(hasUsableHlsSegments([undefined, new Uint8Array(0)]), false);
+});
+
+test('detects AAC and MP3 HLS segments and rejects unsupported transport streams', () => {
+  assert.equal(detectHlsSegmentCodec(new Uint8Array([0xff, 0xf1, 0x50, 0x80])), 'aac');
+  assert.equal(detectHlsSegmentCodec(new Uint8Array([0xff, 0xfb, 0x90, 0x64])), 'mp3');
+  assert.equal(detectHlsSegmentCodec(new Uint8Array([0x47, 0x00, 0x10, 0x00])), undefined);
+});
+
+test('allows generic HLS as a compatibility fallback while keeping native playback first', () => {
+  assert.equal(shouldUseManagedHlsReader('https://example.com/live/channel.m3u8'), true);
 });

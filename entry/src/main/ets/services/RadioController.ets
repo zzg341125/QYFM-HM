@@ -20,7 +20,8 @@ import {
   sessionPlaybackMode,
   shouldAutoPlayOnBluetoothConnect,
   shouldStopForBluetoothDisconnect,
-  shouldResumeStoppedBluetooth
+  shouldResumeStoppedBluetooth,
+  shouldRecoverFromBufferStall
 } from '../utils/PlaybackRecovery';
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
 import { safeSessionArtwork } from '../utils/SessionArtwork';
@@ -40,7 +41,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.36 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.37 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -75,6 +76,7 @@ export class RadioController {
   private retryTimer: number = -1;
   private watchdogTimer: number = -1;
   private bufferHintTimer: number = -1;
+  private bufferStallTimer: number = -1;
   private retryCount: number = 0;
   private recoveryGate: PlaybackRecoveryGate = new PlaybackRecoveryGate();
   private candidatePosition: number = 0;
@@ -523,12 +525,14 @@ export class RadioController {
         this.buffering = true;
         if (this.isPlaying) {
           this.scheduleBufferHint();
+          this.scheduleBufferStallRecovery(player);
         }
         this.startWatchdog(player);
       } else if (infoType === media.BufferingInfoType.BUFFERING_END) {
         console.info(`直播缓冲结束: ${Date.now() - this.playbackRequestedAt}ms`);
         this.buffering = false;
         this.clearBufferHint();
+        this.clearBufferStallRecovery();
         this.clearWatchdog();
       }
     });
@@ -633,6 +637,7 @@ export class RadioController {
     } else if (state === 'playing') {
       this.clearWatchdog();
       this.clearBufferHint();
+      this.clearBufferStallRecovery();
       this.buffering = false;
       this.retryCount = 0;
       this.isPlaying = true;
@@ -643,6 +648,7 @@ export class RadioController {
     } else if (state === 'paused') {
       this.isPlaying = false;
       this.clearBufferHint();
+      this.clearBufferStallRecovery();
       this.buffering = false;
       if (!this.waitingForBluetooth) {
         this.statusText = this.audioInterrupted ? '音频暂时被其他应用占用' : '已暂停';
@@ -652,6 +658,7 @@ export class RadioController {
     } else if (state === 'completed' || state === 'stopped') {
       this.isPlaying = false;
       this.clearBufferHint();
+      this.clearBufferStallRecovery();
       this.buffering = false;
       await this.updateSessionPlaybackState(false);
       if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
@@ -872,9 +879,28 @@ export class RadioController {
     }
   }
 
+  private scheduleBufferStallRecovery(player: media.AVPlayer): void {
+    this.clearBufferStallRecovery();
+    this.bufferStallTimer = setTimeout(() => {
+      this.bufferStallTimer = -1;
+      if (this.player === player &&
+        shouldRecoverFromBufferStall(this.isPlaying, this.buffering, 1500)) {
+        this.handlePlaybackFailure('直播连续缓冲超过安全阈值', player);
+      }
+    }, 1500);
+  }
+
+  private clearBufferStallRecovery(): void {
+    if (this.bufferStallTimer >= 0) {
+      clearTimeout(this.bufferStallTimer);
+      this.bufferStallTimer = -1;
+    }
+  }
+
   private clearRecoveryTimers(): void {
     this.clearWatchdog();
     this.clearBufferHint();
+    this.clearBufferStallRecovery();
     if (this.retryTimer >= 0) {
       clearTimeout(this.retryTimer);
       this.retryTimer = -1;

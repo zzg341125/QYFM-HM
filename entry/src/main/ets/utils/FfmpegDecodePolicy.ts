@@ -11,15 +11,19 @@ export function shouldReconnectAfterPause(paused: boolean): boolean {
   return paused || !paused;
 }
 
-export function pcmStartWatermark(fastStart: boolean): number {
-  const seconds = fastStart ? 0.25 : 0.6;
+export function pcmStartWatermark(fastStart: boolean, managedHls: boolean = false): number {
+  const seconds = managedHls ? 6 : (fastStart ? 0.25 : 0.6);
   return Math.round(
     OUTPUT_SAMPLE_RATE * OUTPUT_CHANNELS * OUTPUT_BYTES_PER_SAMPLE * seconds
   );
 }
 
-export function shouldStartPcmRenderer(fastStart: boolean, queuedBytes: number): boolean {
-  return queuedBytes >= pcmStartWatermark(fastStart);
+export function shouldStartPcmRenderer(
+  fastStart: boolean,
+  queuedBytes: number,
+  managedHls: boolean = false
+): boolean {
+  return queuedBytes >= pcmStartWatermark(fastStart, managedHls);
 }
 
 export function pcmQueueDurationSeconds(managedHls: boolean): number {

@@ -9,7 +9,8 @@ import {
   shouldAutoPlayOnBluetoothConnect,
   shouldStopForBluetoothDisconnect,
   shouldResumeStoppedBluetooth,
-  shouldResumeAfterForeground
+  shouldResumeAfterForeground,
+  shouldRecoverFromBufferStall
 } from '../entry/src/main/ets/utils/PlaybackRecovery.ts';
 
 test('uses fast start with segment-safe buffering and watchdog timing', () => {
@@ -134,4 +135,11 @@ test('resumes a Bluetooth-stopped station only for the same device inside its wi
   assert.equal(shouldResumeStoppedBluetooth(true, false, true, true), false);
   assert.equal(shouldResumeStoppedBluetooth(true, true, false, true), false);
   assert.equal(shouldResumeStoppedBluetooth(true, true, true, false), false);
+});
+
+test('falls back only when a live stream remains buffering beyond the grace period', () => {
+  assert.equal(shouldRecoverFromBufferStall(true, true, 1499), false);
+  assert.equal(shouldRecoverFromBufferStall(true, true, 1500), true);
+  assert.equal(shouldRecoverFromBufferStall(false, true, 5000), false);
+  assert.equal(shouldRecoverFromBufferStall(true, false, 5000), false);
 });

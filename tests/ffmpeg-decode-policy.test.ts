@@ -23,8 +23,12 @@ test('reconnects the live FFmpeg stream instead of resuming stale pause buffers'
 test('starts PCM output only after the configured live jitter waterline', () => {
   assert.equal(pcmStartWatermark(true), 96000);
   assert.equal(pcmStartWatermark(false), 230400);
+  assert.equal(pcmStartWatermark(true, true), 2304000);
+  assert.equal(pcmStartWatermark(false, true), 2304000);
   assert.equal(shouldStartPcmRenderer(true, 95999), false);
   assert.equal(shouldStartPcmRenderer(true, 96000), true);
+  assert.equal(shouldStartPcmRenderer(true, 2303999, true), false);
+  assert.equal(shouldStartPcmRenderer(true, 2304000, true), true);
   assert.equal(shouldStartPcmRenderer(false, 230399), false);
   assert.equal(shouldStartPcmRenderer(false, 230400), true);
 });

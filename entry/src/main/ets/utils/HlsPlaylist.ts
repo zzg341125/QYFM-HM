@@ -3,6 +3,28 @@ export interface HlsMediaPlaylist {
   targetDurationSeconds: number;
 }
 
+export function hlsInitialSegmentCount(targetDurationSeconds: number): number {
+  return targetDurationSeconds > 0 && targetDurationSeconds <= 3 ? 2 : 1;
+}
+
+export type HlsSegmentData = ArrayBuffer | Uint8Array;
+
+export function hasUsableHlsSegments(
+  chunks: Array<HlsSegmentData | undefined>
+): boolean {
+  return chunks.some((chunk: HlsSegmentData | undefined): boolean => {
+    return chunk !== undefined && chunk.byteLength > 0;
+  });
+}
+
+export function detectHlsSegmentCodec(data: Uint8Array): 'aac' | 'mp3' | undefined {
+  const audio = stripLeadingId3(data);
+  if (audio.length < 2 || audio[0] !== 0xff || (audio[1] & 0xe0) !== 0xe0) {
+    return undefined;
+  }
+  return ((audio[1] >> 1) & 0x03) === 0 ? 'aac' : 'mp3';
+}
+
 export type HlsRequestKind = 'playlist' | 'segment';
 
 export function hlsRequestReferer(
@@ -24,7 +46,8 @@ export function shouldUseManagedHlsReader(url: string): boolean {
     /^https?:\/\/live\.(?:xmcdn|ximalaya)\.com(?::\d+)?\//i.test(trimmed) ||
     /^https?:\/\/stream\.ginnet\.cloud\//i.test(trimmed) ||
     /^https?:\/\/flv\.ccdntech\.com\//i.test(trimmed) ||
-    /^https?:\/\/streamak0138\.akamaized\.net\//i.test(trimmed);
+    /^https?:\/\/streamak0138\.akamaized\.net\//i.test(trimmed) ||
+    isHlsPlaylistUrl(trimmed);
 }
 
 function normalizePath(path: string): string {

@@ -48,7 +48,7 @@ WebDAV 保存 `application/json` 文件，备份数据 `schemaVersion` 为 `2`�
 {
   "schemaVersion": 2,
   "app": "QYFM HarmonyOS",
-  "appVersion": "1.0.36",
+  "appVersion": "1.0.37",
   "exportedAt": "ISO-8601",
   "stationOrder": ["id-2", "id-1"],
   "stations": [

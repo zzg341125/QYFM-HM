@@ -44,6 +44,9 @@ export class FfmpegAudioPlayer {
   private interrupted: boolean = false;
   private stopped: boolean = false;
   private fastStart: boolean = true;
+  private managedHls: boolean = false;
+  private pcmUnderrunEvents: number = 0;
+  private lastPcmUnderrunLogAt: number = 0;
 
   private readonly audioInterruptListener = (event: audio.InterruptEvent): void => {
     const begin = event.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN;
@@ -69,7 +72,18 @@ export class FfmpegAudioPlayer {
     if (this.paused || this.stopped) {
       output.fill(0);
     } else {
-      this.pcmReader.readInto(output);
+      const written = this.pcmReader.readInto(output);
+      if (written < output.length) {
+        this.pcmUnderrunEvents++;
+        const now = Date.now();
+        if (now - this.lastPcmUnderrunLogAt >= 1000) {
+          this.lastPcmUnderrunLogAt = now;
+          console.info(
+            `PCM 欠载 #${this.pcmUnderrunEvents}: 缺少${output.length - written}字节, ` +
+            `剩余${this.pcmQueue.byteLength}字节`
+          );
+        }
+      }
     }
     return audio.AudioDataCallbackResult.VALID;
   };
@@ -96,6 +110,7 @@ export class FfmpegAudioPlayer {
     this.fastStart = fastStart;
     this.sourceUrl = url;
     const managedHls = shouldUseManagedHlsReader(url);
+    this.managedHls = managedHls;
     const pcmQueueSeconds = pcmQueueDurationSeconds(managedHls);
     this.pcmQueue = new AudioPcmQueue(
       ffmpeg.outputSampleRate() * ffmpeg.outputChannels() * 4 * pcmQueueSeconds
@@ -248,7 +263,8 @@ export class FfmpegAudioPlayer {
 
   private codecForChunk(chunk: Uint8Array): string {
     const detected = this.relay?.detectedCodec() ??
-      (this.hlsReader !== undefined ? 'aac' : inferAudioCodecFromUrl(this.sourceUrl));
+      this.hlsReader?.detectedCodec() ??
+      inferAudioCodecFromUrl(this.sourceUrl);
     if (detected === 'aac' && chunk.length >= 2 &&
       chunk[0] === 0x56 && (chunk[1] & 0xe0) === 0xe0) {
       return 'aac_latm';
@@ -310,9 +326,10 @@ export class FfmpegAudioPlayer {
     try {
       this.pcmQueue.enqueue(pcm);
       if (this.renderer === undefined && !this.creatingRenderer &&
-        shouldStartPcmRenderer(this.fastStart, this.pcmQueue.byteLength)) {
+        shouldStartPcmRenderer(this.fastStart, this.pcmQueue.byteLength, this.managedHls)) {
         console.info(
-          `FFmpeg PCM 安全水位已满足: ${this.pcmQueue.byteLength}/${pcmStartWatermark(this.fastStart)} 字节`
+          `FFmpeg PCM 安全水位已满足: ${this.pcmQueue.byteLength}/` +
+          `${pcmStartWatermark(this.fastStart, this.managedHls)} 字节`
         );
         const task = this.createRenderer(this.decoderHandle).catch((error: BusinessError) => {
           this.callbacks.onState('error', error.message ?? 'AudioRenderer 启动失败');

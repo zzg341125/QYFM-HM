@@ -168,3 +168,11 @@ export type SessionPlaybackMode = 'playing' | 'hidden';
 export function sessionPlaybackMode(isPlaying: boolean): SessionPlaybackMode {
   return isPlaying ? 'playing' : 'hidden';
 }
+
+export function shouldRecoverFromBufferStall(
+  isPlaying: boolean,
+  buffering: boolean,
+  bufferingMilliseconds: number
+): boolean {
+  return isPlaying && buffering && bufferingMilliseconds >= 1500;
+}

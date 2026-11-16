@@ -1,6 +1,9 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { http } from '@kit.NetworkKit';
 import {
+  detectHlsSegmentCodec,
+  hasUsableHlsSegments,
+  hlsInitialSegmentCount,
   hlsRequestReferer,
   HlsMediaPlaylist,
   parseHlsMediaPlaylist,
@@ -9,7 +12,7 @@ import {
 } from '../utils/HlsPlaylist';
 import { AudioChunkSink } from './IcecastStreamRelay';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.36 (FFmpeg HLS)';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.37 (FFmpeg HLS)';
 
 class HlsRequestHeaders {
   'User-Agent': string = USER_AGENT;
@@ -30,9 +33,15 @@ function wait(milliseconds: number): Promise<void> {
 export class HlsStreamReader {
   private stopped: boolean = false;
   private activeRequest: http.HttpRequest | undefined = undefined;
+  private activeBinaryRequests: Set<http.HttpRequest> = new Set<http.HttpRequest>();
   private request: http.HttpRequest | undefined = undefined;
   private loopTask: Promise<void> | undefined = undefined;
   private seenSegments: Set<string> = new Set<string>();
+  private codec: 'aac' | 'mp3' | undefined = undefined;
+
+  detectedCodec(): 'aac' | 'mp3' | undefined {
+    return this.codec;
+  }
 
   async start(url: string, sink: AudioChunkSink): Promise<void> {
     const sourceText = await this.fetchText(url, hlsRequestReferer('playlist', url, url));
@@ -50,12 +59,12 @@ export class HlsStreamReader {
       this.seenSegments.add(segment);
     });
     console.info(`HLS 当前分片数=${playlist.segments.length}，目标时长=${playlist.targetDurationSeconds}s`);
-    await this.appendSegment(
-      playlist.segments[playlist.segments.length - 1],
-      sink,
-      mediaUrl
+    const initialCount = hlsInitialSegmentCount(playlist.targetDurationSeconds);
+    const initialSegments: string[] = playlist.segments.slice(
+      Math.max(0, playlist.segments.length - initialCount)
     );
-    console.info('HLS 首片已交给 FFmpeg');
+    await this.appendSegments(initialSegments, sink, mediaUrl);
+    console.info(`HLS 首轮已交给 FFmpeg: ${initialSegments.length}片`);
     this.loopTask = this.refreshLoop(mediaUrl, playlist.targetDurationSeconds, sink, url);
   }
 
@@ -72,6 +81,15 @@ export class HlsStreamReader {
       }
     }
     this.request = undefined;
+    this.activeBinaryRequests.forEach((binaryRequest: http.HttpRequest): void => {
+      try {
+        binaryRequest.destroy();
+      } catch (error) {
+        const businessError = error as BusinessError;
+        console.info(`停止 HLS 分片请求失败: ${businessError.message ?? '未知错误'}`);
+      }
+    });
+    this.activeBinaryRequests.clear();
   }
 
   private async refreshLoop(
@@ -99,11 +117,8 @@ export class HlsStreamReader {
           this.seenSegments.add(segment);
         });
         const selected = pending.length > 3 ? pending.slice(pending.length - 2) : pending;
-        for (const segment of selected) {
-          if (this.stopped) {
-            return;
-          }
-          await this.appendSegment(segment, sink, mediaUrl);
+        if (selected.length > 0) {
+          await this.appendSegments(selected, sink, mediaUrl);
         }
         if (this.seenSegments.size > 256) {
           this.seenSegments.clear();
@@ -124,17 +139,45 @@ export class HlsStreamReader {
     }
   }
 
-  private async appendSegment(
-    segmentUrl: string,
+  private async appendSegments(
+    segmentUrls: string[],
     sink: AudioChunkSink,
     mediaUrl: string
   ): Promise<void> {
-    const data = await this.fetchBinary(
-      segmentUrl,
-      hlsRequestReferer('segment', mediaUrl, mediaUrl)
+    const referer = hlsRequestReferer('segment', mediaUrl, mediaUrl);
+    const chunks: Array<ArrayBuffer | undefined> = await Promise.all(
+      segmentUrls.map((segmentUrl: string): Promise<ArrayBuffer | undefined> => {
+        return this.fetchBinary(segmentUrl, referer).catch(
+          (error: BusinessError): undefined => {
+            console.info(`HLS 过期分片已跳过: ${error.message ?? '未知错误'}`);
+            return undefined;
+          }
+        );
+      })
     );
-    if (!this.stopped && data.byteLength > 0) {
-      sink(stripLeadingId3(new Uint8Array(data)));
+    if (this.stopped) {
+      return;
+    }
+    if (!hasUsableHlsSegments(chunks)) {
+      throw new Error('本轮 HLS 分片已全部过期');
+    }
+    let delivered = 0;
+    for (const data of chunks) {
+      if (data === undefined || data.byteLength <= 0) {
+        continue;
+      }
+      const audio = stripLeadingId3(new Uint8Array(data));
+      const codec = detectHlsSegmentCodec(audio);
+      if (codec === undefined) {
+        console.info('HLS 分片编码不受独立解码器支持，已跳过');
+        continue;
+      }
+      this.codec = codec;
+      sink(audio);
+      delivered++;
+    }
+    if (delivered === 0) {
+      throw new Error('本轮 HLS 分片编码不受支持');
     }
   }
 
@@ -163,8 +206,8 @@ export class HlsStreamReader {
   }
 
   private async fetchBinary(url: string, referer: string): Promise<ArrayBuffer> {
-    const request = this.ensureRequest();
-    this.activeRequest = request;
+    const request = http.createHttp();
+    this.activeBinaryRequests.add(request);
     try {
       const response = await request.request(url, {
         method: http.RequestMethod.GET,
@@ -180,9 +223,16 @@ export class HlsStreamReader {
       }
       return response.result;
     } catch (error) {
-      this.resetRequest(request);
       const businessError = error as BusinessError;
       throw new Error(businessError.message ?? 'HLS 音频分片请求失败');
+    } finally {
+      this.activeBinaryRequests.delete(request);
+      try {
+        request.destroy();
+      } catch (error) {
+        const businessError = error as BusinessError;
+        console.info(`释放 HLS 分片请求失败: ${businessError.message ?? '未知错误'}`);
+      }
     }
   }
 
