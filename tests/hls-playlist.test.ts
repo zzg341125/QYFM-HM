@@ -91,6 +91,17 @@ test('routes verified Taiwan AAC HLS hosts through the low-latency FFmpeg reader
   );
 });
 
+test('routes seven-second Ximalaya AAC HLS playlists through the managed reader', () => {
+  assert.equal(
+    shouldUseManagedHlsReader('http://live.xmcdn.com/live/2628/64.m3u8'),
+    true
+  );
+  assert.equal(
+    shouldUseManagedHlsReader('http://live.ximalaya.com/radio-first-page-app/live/151/64.m3u8'),
+    true
+  );
+});
+
 test('removes the per-segment ID3 header before AAC decoding', () => {
   const segment = new Uint8Array(20);
   segment.set([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05], 0);

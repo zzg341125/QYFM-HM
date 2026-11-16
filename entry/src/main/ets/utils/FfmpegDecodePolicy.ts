@@ -21,3 +21,7 @@ export function pcmStartWatermark(fastStart: boolean): number {
 export function shouldStartPcmRenderer(fastStart: boolean, queuedBytes: number): boolean {
   return queuedBytes >= pcmStartWatermark(fastStart);
 }
+
+export function pcmQueueDurationSeconds(managedHls: boolean): number {
+  return managedHls ? 12 : 3;
+}

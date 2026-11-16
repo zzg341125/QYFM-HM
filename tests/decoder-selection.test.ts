@@ -12,9 +12,17 @@ test('uses the native decoder for ordinary progressive and HLS radio', () => {
   assert.equal(selectPrimaryDecoderEngine('http://stream.ginnet.cloud/live/fm/playlist.m3u8'), 'native');
 });
 
-test('uses the managed FFmpeg reader only for the known incompatible NER host', () => {
+test('uses managed FFmpeg for known incompatible and seven-second-segment HLS hosts', () => {
   assert.equal(
     selectPrimaryDecoderEngine('https://wowza1.ner.gov.tw/TPFM/1/playlist.m3u8'),
+    'ffmpeg'
+  );
+  assert.equal(
+    selectPrimaryDecoderEngine('http://live.xmcdn.com/live/2628/64.m3u8'),
+    'ffmpeg'
+  );
+  assert.equal(
+    selectPrimaryDecoderEngine('http://live.ximalaya.com/radio-first-page-app/live/151/64.m3u8'),
     'ffmpeg'
   );
 });

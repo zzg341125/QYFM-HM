@@ -11,6 +11,7 @@ export function isHlsPlaylistUrl(url: string): boolean {
 export function shouldUseManagedHlsReader(url: string): boolean {
   const trimmed = url.trim();
   return /^https?:\/\/wowza1\.ner\.gov\.tw\/TPFM\/\d+\//i.test(trimmed) ||
+    /^https?:\/\/live\.(?:xmcdn|ximalaya)\.com\//i.test(trimmed) ||
     /^https?:\/\/stream\.ginnet\.cloud\//i.test(trimmed) ||
     /^https?:\/\/flv\.ccdntech\.com\//i.test(trimmed) ||
     /^https?:\/\/streamak0138\.akamaized\.net\//i.test(trimmed);

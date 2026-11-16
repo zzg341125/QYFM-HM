@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   pcmStartWatermark,
+  pcmQueueDurationSeconds,
   shouldPrimeDecoder,
   shouldReconnectAfterPause,
   shouldStartPcmRenderer
@@ -26,4 +27,9 @@ test('starts PCM output only after the configured live jitter waterline', () => 
   assert.equal(shouldStartPcmRenderer(true, 96000), true);
   assert.equal(shouldStartPcmRenderer(false, 230399), false);
   assert.equal(shouldStartPcmRenderer(false, 230400), true);
+});
+
+test('keeps a full seven-second HLS segment without discarding most of it', () => {
+  assert.equal(pcmQueueDurationSeconds(false), 3);
+  assert.equal(pcmQueueDurationSeconds(true), 12);
 });

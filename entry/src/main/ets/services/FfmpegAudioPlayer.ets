@@ -5,6 +5,7 @@ import ffmpeg from 'libqyfm_ffmpeg.so';
 import { AudioPcmQueue, AudioPcmQueueReader } from '../utils/AudioPcmQueue';
 import {
   pcmStartWatermark,
+  pcmQueueDurationSeconds,
   shouldPrimeDecoder,
   shouldReconnectAfterPause,
   shouldStartPcmRenderer
@@ -20,8 +21,6 @@ export interface FfmpegPlayerCallbacks {
   onState: (state: FfmpegPlayerState, message?: string) => void;
 }
 
-const MAX_QUEUED_PCM_SECONDS: number = 2;
-
 export class FfmpegAudioPlayer {
   private callbacks: FfmpegPlayerCallbacks;
   private context: common.UIAbilityContext | undefined = undefined;
@@ -31,7 +30,7 @@ export class FfmpegAudioPlayer {
   private renderer: audio.AudioRenderer | undefined = undefined;
   private decoderHandle: number = -1;
   private pcmQueue: AudioPcmQueue = new AudioPcmQueue(
-    ffmpeg.outputSampleRate() * ffmpeg.outputChannels() * 4 * MAX_QUEUED_PCM_SECONDS
+    ffmpeg.outputSampleRate() * ffmpeg.outputChannels() * 4 * pcmQueueDurationSeconds(false)
   );
   private pcmReader: AudioPcmQueueReader = new AudioPcmQueueReader(this.pcmQueue);
   private compressedQueue: AudioPcmQueue = new AudioPcmQueue(256 * 1024);
@@ -96,8 +95,15 @@ export class FfmpegAudioPlayer {
     this.paused = false;
     this.fastStart = fastStart;
     this.sourceUrl = url;
+    const managedHls = shouldUseManagedHlsReader(url);
+    const pcmQueueSeconds = pcmQueueDurationSeconds(managedHls);
+    this.pcmQueue = new AudioPcmQueue(
+      ffmpeg.outputSampleRate() * ffmpeg.outputChannels() * 4 * pcmQueueSeconds
+    );
+    this.pcmReader = new AudioPcmQueueReader(this.pcmQueue);
+    console.info(`FFmpeg PCM 缓冲窗口: ${pcmQueueSeconds}秒`);
     this.callbacks.onState('buffering');
-    if (shouldUseManagedHlsReader(url)) {
+    if (managedHls) {
       const hlsReader = new HlsStreamReader();
       this.hlsReader = hlsReader;
       try {

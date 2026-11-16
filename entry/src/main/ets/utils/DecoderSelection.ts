@@ -1,7 +1,8 @@
 export type DecoderEngine = 'native' | 'ffmpeg';
 
 export function selectPrimaryDecoderEngine(url: string): DecoderEngine {
-  return /^https?:\/\/wowza1\.ner\.gov\.tw\/TPFM\/\d+\//i.test(url.trim())
+  return /^https?:\/\/wowza1\.ner\.gov\.tw\/TPFM\/\d+\//i.test(url.trim()) ||
+    /^https?:\/\/live\.(?:xmcdn|ximalaya)\.com\//i.test(url.trim())
     ? 'ffmpeg'
     : 'native';
 }
