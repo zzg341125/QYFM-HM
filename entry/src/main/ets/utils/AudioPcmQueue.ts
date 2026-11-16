@@ -12,7 +12,16 @@ export class AudioPcmQueue {
   }
 
   enqueue(pcm: ArrayBuffer): void {
-    if (pcm.byteLength <= 0 || pcm.byteLength > this.maxBytes) {
+    if (pcm.byteLength <= 0) {
+      return;
+    }
+    if (pcm.byteLength > this.maxBytes) {
+      const alignedMaxBytes = this.maxBytes - (this.maxBytes % 4);
+      if (alignedMaxBytes <= 0) {
+        return;
+      }
+      this.items = [pcm.slice(pcm.byteLength - alignedMaxBytes)];
+      this.bytes = alignedMaxBytes;
       return;
     }
     while (this.items.length > 0 && this.bytes + pcm.byteLength > this.maxBytes) {
@@ -37,4 +46,15 @@ export class AudioPcmQueue {
     this.items = [];
     this.bytes = 0;
   }
+}
+
+export function buildPcmWriteChunkSize(
+  sampleRate: number,
+  channels: number,
+  bytesPerSample: number,
+  durationMs: number
+): number {
+  const frameBytes = Math.max(1, channels * bytesPerSample);
+  const requested = Math.floor(sampleRate * frameBytes * durationMs / 1000);
+  return Math.max(frameBytes, requested - (requested % frameBytes));
 }

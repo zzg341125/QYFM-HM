@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import ffmpeg from 'libqyfm_ffmpeg.so';
-import { AudioPcmQueue } from '../utils/AudioPcmQueue';
+import { AudioPcmQueue, buildPcmWriteChunkSize } from '../utils/AudioPcmQueue';
 import { inferAudioCodecFromUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
 import { shouldUseManagedHlsReader } from '../utils/HlsPlaylist';
 import { HlsStreamReader } from './HlsStreamReader';
@@ -14,7 +14,8 @@ export interface FfmpegPlayerCallbacks {
   onState: (state: FfmpegPlayerState, message?: string) => void;
 }
 
-const MAX_QUEUED_PCM_SECONDS: number = 1;
+const MAX_QUEUED_PCM_SECONDS: number = 2;
+const PCM_WRITE_FRAME_MS: number = 20;
 
 export class FfmpegAudioPlayer {
   private callbacks: FfmpegPlayerCallbacks;
@@ -25,6 +26,12 @@ export class FfmpegAudioPlayer {
   private decoderHandle: number = -1;
   private pcmQueue: AudioPcmQueue = new AudioPcmQueue(
     ffmpeg.outputSampleRate() * ffmpeg.outputChannels() * 4 * MAX_QUEUED_PCM_SECONDS
+  );
+  private pcmWriteChunkSize: number = buildPcmWriteChunkSize(
+    ffmpeg.outputSampleRate(),
+    ffmpeg.outputChannels(),
+    4,
+    PCM_WRITE_FRAME_MS
   );
   private writerRunning: boolean = false;
   private writerTask: Promise<void> | undefined = undefined;
@@ -288,7 +295,8 @@ export class FfmpegAudioPlayer {
       }
       let offset = 0;
       while (offset < pcm.byteLength && !this.stopped) {
-        const written = await renderer.write(pcm.slice(offset));
+        const end = Math.min(offset + this.pcmWriteChunkSize, pcm.byteLength);
+        const written = await renderer.write(pcm.slice(offset, end));
         if (written <= 0) {
           break;
         }
