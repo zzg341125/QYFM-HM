@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  hlsRequestReferer,
   isHlsPlaylistUrl,
   parseHlsMediaPlaylist,
   parseHlsVariantUrl,
@@ -97,7 +98,15 @@ test('routes seven-second Ximalaya AAC HLS playlists through the managed reader'
     true
   );
   assert.equal(
+    shouldUseManagedHlsReader('http://live.xmcdn.com:80/live/2628/64.m3u8'),
+    true
+  );
+  assert.equal(
     shouldUseManagedHlsReader('http://live.ximalaya.com/radio-first-page-app/live/151/64.m3u8'),
+    true
+  );
+  assert.equal(
+    shouldUseManagedHlsReader('http://live.ximalaya.com:80/radio-first-page-app/live/151/64.m3u8'),
     true
   );
 });
@@ -108,4 +117,11 @@ test('removes the per-segment ID3 header before AAC decoding', () => {
   segment.set([1, 2, 3, 4, 5], 10);
   segment.set([0xff, 0xf1, 0x50, 0x80, 0x01], 15);
   assert.deepEqual(Array.from(stripLeadingId3(segment)), [0xff, 0xf1, 0x50, 0x80, 0x01]);
+});
+
+test('uses the playlist as Referer when fetching protected AAC segments', () => {
+  const master = 'https://wowza1.ner.gov.tw/TPFM/1/playlist.m3u8';
+  const media = 'https://wowza1.ner.gov.tw/TPFM/1/chunklist_w1.m3u8';
+  assert.equal(hlsRequestReferer('playlist', master, media), master);
+  assert.equal(hlsRequestReferer('segment', master, media), media);
 });

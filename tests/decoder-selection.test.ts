@@ -22,7 +22,15 @@ test('uses managed FFmpeg for known incompatible and seven-second-segment HLS ho
     'ffmpeg'
   );
   assert.equal(
+    selectPrimaryDecoderEngine('http://live.xmcdn.com:80/live/2628/64.m3u8'),
+    'ffmpeg'
+  );
+  assert.equal(
     selectPrimaryDecoderEngine('http://live.ximalaya.com/radio-first-page-app/live/151/64.m3u8'),
+    'ffmpeg'
+  );
+  assert.equal(
+    selectPrimaryDecoderEngine('http://live.ximalaya.com:80/radio-first-page-app/live/151/64.m3u8'),
     'ffmpeg'
   );
 });

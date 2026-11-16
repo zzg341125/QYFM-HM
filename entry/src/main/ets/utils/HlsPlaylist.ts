@@ -3,6 +3,16 @@ export interface HlsMediaPlaylist {
   targetDurationSeconds: number;
 }
 
+export type HlsRequestKind = 'playlist' | 'segment';
+
+export function hlsRequestReferer(
+  kind: HlsRequestKind,
+  masterUrl: string,
+  mediaUrl: string
+): string {
+  return kind === 'playlist' ? masterUrl.trim() : mediaUrl.trim();
+}
+
 export function isHlsPlaylistUrl(url: string): boolean {
   const path = url.trim().toLowerCase().split(/[?#]/)[0];
   return path.endsWith('.m3u8') || path.endsWith('/hls');
@@ -11,7 +21,7 @@ export function isHlsPlaylistUrl(url: string): boolean {
 export function shouldUseManagedHlsReader(url: string): boolean {
   const trimmed = url.trim();
   return /^https?:\/\/wowza1\.ner\.gov\.tw\/TPFM\/\d+\//i.test(trimmed) ||
-    /^https?:\/\/live\.(?:xmcdn|ximalaya)\.com\//i.test(trimmed) ||
+    /^https?:\/\/live\.(?:xmcdn|ximalaya)\.com(?::\d+)?\//i.test(trimmed) ||
     /^https?:\/\/stream\.ginnet\.cloud\//i.test(trimmed) ||
     /^https?:\/\/flv\.ccdntech\.com\//i.test(trimmed) ||
     /^https?:\/\/streamak0138\.akamaized\.net\//i.test(trimmed);

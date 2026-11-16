@@ -1,6 +1,7 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { http } from '@kit.NetworkKit';
 import {
+  hlsRequestReferer,
   HlsMediaPlaylist,
   parseHlsMediaPlaylist,
   parseHlsVariantUrl,
@@ -8,11 +9,16 @@ import {
 } from '../utils/HlsPlaylist';
 import { AudioChunkSink } from './IcecastStreamRelay';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.35 (FFmpeg HLS)';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.36 (FFmpeg HLS)';
 
 class HlsRequestHeaders {
   'User-Agent': string = USER_AGENT;
   'Accept': string = '*/*';
+  'Referer': string;
+
+  constructor(referer: string) {
+    this.Referer = referer;
+  }
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -29,11 +35,13 @@ export class HlsStreamReader {
   private seenSegments: Set<string> = new Set<string>();
 
   async start(url: string, sink: AudioChunkSink): Promise<void> {
-    const sourceText = await this.fetchText(url);
+    const sourceText = await this.fetchText(url, hlsRequestReferer('playlist', url, url));
     const variantUrl = parseHlsVariantUrl(sourceText, url);
     const mediaUrl = variantUrl ?? url;
     console.info(`HLS 主播放列表已读取: ${mediaUrl}`);
-    const mediaText = variantUrl === undefined ? sourceText : await this.fetchText(variantUrl);
+    const mediaText = variantUrl === undefined
+      ? sourceText
+      : await this.fetchText(variantUrl, hlsRequestReferer('playlist', url, variantUrl));
     const playlist = parseHlsMediaPlaylist(mediaText, mediaUrl);
     if (playlist.segments.length === 0) {
       throw new Error('HLS 播放列表中没有可播放分片');
@@ -42,9 +50,13 @@ export class HlsStreamReader {
       this.seenSegments.add(segment);
     });
     console.info(`HLS 当前分片数=${playlist.segments.length}，目标时长=${playlist.targetDurationSeconds}s`);
-    await this.appendSegment(playlist.segments[playlist.segments.length - 1], sink);
+    await this.appendSegment(
+      playlist.segments[playlist.segments.length - 1],
+      sink,
+      mediaUrl
+    );
     console.info('HLS 首片已交给 FFmpeg');
-    this.loopTask = this.refreshLoop(mediaUrl, playlist.targetDurationSeconds, sink);
+    this.loopTask = this.refreshLoop(mediaUrl, playlist.targetDurationSeconds, sink, url);
   }
 
   destroy(): void {
@@ -65,7 +77,8 @@ export class HlsStreamReader {
   private async refreshLoop(
     mediaUrl: string,
     targetDurationSeconds: number,
-    sink: AudioChunkSink
+    sink: AudioChunkSink,
+    masterUrl: string
   ): Promise<void> {
     let failures = 0;
     while (!this.stopped) {
@@ -74,7 +87,10 @@ export class HlsStreamReader {
         return;
       }
       try {
-        const text = await this.fetchText(mediaUrl);
+        const text = await this.fetchText(
+          mediaUrl,
+          hlsRequestReferer('playlist', masterUrl, mediaUrl)
+        );
         const playlist: HlsMediaPlaylist = parseHlsMediaPlaylist(text, mediaUrl);
         const pending = playlist.segments.filter(
           (segment: string): boolean => !this.seenSegments.has(segment)
@@ -87,7 +103,7 @@ export class HlsStreamReader {
           if (this.stopped) {
             return;
           }
-          await this.appendSegment(segment, sink);
+          await this.appendSegment(segment, sink, mediaUrl);
         }
         if (this.seenSegments.size > 256) {
           this.seenSegments.clear();
@@ -108,20 +124,27 @@ export class HlsStreamReader {
     }
   }
 
-  private async appendSegment(segmentUrl: string, sink: AudioChunkSink): Promise<void> {
-    const data = await this.fetchBinary(segmentUrl);
+  private async appendSegment(
+    segmentUrl: string,
+    sink: AudioChunkSink,
+    mediaUrl: string
+  ): Promise<void> {
+    const data = await this.fetchBinary(
+      segmentUrl,
+      hlsRequestReferer('segment', mediaUrl, mediaUrl)
+    );
     if (!this.stopped && data.byteLength > 0) {
       sink(stripLeadingId3(new Uint8Array(data)));
     }
   }
 
-  private async fetchText(url: string): Promise<string> {
+  private async fetchText(url: string, referer: string): Promise<string> {
     const request = this.ensureRequest();
     this.activeRequest = request;
     try {
       const response = await request.request(url, {
         method: http.RequestMethod.GET,
-        header: new HlsRequestHeaders(),
+        header: new HlsRequestHeaders(referer),
         connectTimeout: 6000,
         readTimeout: 8000,
         expectDataType: http.HttpDataType.STRING,
@@ -139,13 +162,13 @@ export class HlsStreamReader {
     }
   }
 
-  private async fetchBinary(url: string): Promise<ArrayBuffer> {
+  private async fetchBinary(url: string, referer: string): Promise<ArrayBuffer> {
     const request = this.ensureRequest();
     this.activeRequest = request;
     try {
       const response = await request.request(url, {
         method: http.RequestMethod.GET,
-        header: new HlsRequestHeaders(),
+        header: new HlsRequestHeaders(referer),
         connectTimeout: 6000,
         readTimeout: 8000,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
