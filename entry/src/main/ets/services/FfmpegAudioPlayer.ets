@@ -3,7 +3,7 @@ import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import ffmpeg from 'libqyfm_ffmpeg.so';
 import { AudioPcmQueue, AudioPcmQueueReader } from '../utils/AudioPcmQueue';
-import { shouldPrimeDecoder } from '../utils/FfmpegDecodePolicy';
+import { shouldPrimeDecoder, shouldReconnectAfterPause } from '../utils/FfmpegDecodePolicy';
 import { inferAudioCodecFromUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
 import { shouldUseManagedHlsReader } from '../utils/HlsPlaylist';
 import { HlsStreamReader } from './HlsStreamReader';
@@ -19,6 +19,7 @@ const MAX_QUEUED_PCM_SECONDS: number = 2;
 
 export class FfmpegAudioPlayer {
   private callbacks: FfmpegPlayerCallbacks;
+  private context: common.UIAbilityContext | undefined = undefined;
   private relay: IcecastStreamRelay | undefined = undefined;
   private hlsReader: HlsStreamReader | undefined = undefined;
   private sourceUrl: string = '';
@@ -77,6 +78,10 @@ export class FfmpegAudioPlayer {
   }
 
   async start(context: common.UIAbilityContext, url: string): Promise<void> {
+    this.context = context;
+    this.releaseTask = undefined;
+    this.outputStopTask = undefined;
+    this.stoppingRenderer = undefined;
     this.stopped = false;
     this.paused = false;
     this.sourceUrl = url;
@@ -110,25 +115,24 @@ export class FfmpegAudioPlayer {
 
   async pause(): Promise<void> {
     this.paused = true;
-    this.compressedQueue.clear();
-    this.pcmQueue.clear();
-    this.pcmReader.reset();
-    const renderer = this.renderer;
-    if (renderer !== undefined && renderer.state === audio.AudioState.STATE_RUNNING) {
-      try {
-        await renderer.flush();
-      } catch (error) {
-        const businessError = error as BusinessError;
-        console.info(`FFmpeg 暂停前清空缓冲区失败: ${businessError.message ?? '未知错误'}`);
-      }
-      await renderer.pause();
-    }
+    await this.release();
     this.callbacks.onState('paused');
   }
 
   async resume(): Promise<void> {
     this.paused = false;
     this.interrupted = false;
+    if (shouldReconnectAfterPause(this.stopped)) {
+      const releaseTask = this.releaseTask;
+      if (releaseTask !== undefined) {
+        await releaseTask;
+      }
+      const context = this.context;
+      if (context !== undefined && this.sourceUrl.length > 0) {
+        await this.start(context, this.sourceUrl);
+      }
+      return;
+    }
     const renderer = this.renderer;
     if (renderer !== undefined && renderer.state === audio.AudioState.STATE_PAUSED) {
       await renderer.start();
