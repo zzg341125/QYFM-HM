@@ -5,9 +5,8 @@ import { media } from '@kit.MediaKit';
 import { http, socket } from '@kit.NetworkKit';
 import {
   AudioCodec,
-  HttpChunkDecoder,
+  HttpAudioStreamDecoder,
   HttpEndpoint,
-  IcyMetadataStripper,
   isProgressiveAudioUrl,
   parseAudioCodec,
   parseAudioCodecFromHeaderText,
@@ -63,14 +62,12 @@ export class IcecastStreamRelay {
   private headerKnown: boolean = false;
   private chunked: boolean = false;
   private headerBuffer: Uint8Array = new Uint8Array(0);
-  private chunkDecoder: HttpChunkDecoder = new HttpChunkDecoder();
+  private frameDecoder: HttpAudioStreamDecoder = new HttpAudioStreamDecoder();
   private pendingInput: ArrayBuffer[] = [];
   private ended: boolean = false;
   private failed: boolean = false;
   private destroyed: boolean = false;
-  private passthrough: boolean = false;
   private dataSink: AudioChunkSink | undefined = undefined;
-  private stripper: IcyMetadataStripper = new IcyMetadataStripper();
   private sourceUrl: string = '';
   private redirectCount: number = 0;
 
@@ -102,7 +99,6 @@ export class IcecastStreamRelay {
   ): Promise<void> {
     console.info(`FFmpeg 直播输入启动: ${url}`);
     this.dataSink = dataSink;
-    this.passthrough = true;
     this.sourceUrl = url;
     const endpoint = parseHttpEndpoint(url);
     if (endpoint !== undefined) {
@@ -284,7 +280,7 @@ export class IcecastStreamRelay {
   private buildRequest(endpoint: HttpEndpoint): string {
     return `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.28 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.29 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
@@ -300,11 +296,11 @@ export class IcecastStreamRelay {
       this.headerKnown = true;
       this.icyMetaint = parseIcyMetaint(headers);
       this.codec = parseAudioCodec(headers);
-      this.configureStripper();
+      this.configureFrameDecoder(false);
       const pending = this.pendingInput;
       this.pendingInput = [];
       pending.forEach((chunk: ArrayBuffer) => {
-        this.appendCleanAudio(new Uint8Array(chunk));
+        this.appendDecodedAudio(new Uint8Array(chunk));
       });
     });
     request.on('dataReceive', (chunk: ArrayBuffer): void => {
@@ -315,13 +311,13 @@ export class IcecastStreamRelay {
         this.pendingInput.push(chunk);
         return;
       }
-      this.appendCleanAudio(new Uint8Array(chunk));
+      this.appendDecodedAudio(new Uint8Array(chunk));
     });
     request.on('dataEnd', (): void => {
       this.ended = true;
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.28 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.29 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };
@@ -369,37 +365,22 @@ export class IcecastStreamRelay {
       this.icyMetaint = parseIcyMetaintFromHeaderText(headerText);
       this.codec = parseAudioCodecFromHeaderText(headerText);
       this.chunked = /transfer-encoding\s*:\s*chunked/i.test(headerText);
-      this.configureStripper();
+      this.configureFrameDecoder(this.chunked);
       data = this.headerBuffer.slice(boundary + 4);
       this.headerBuffer = new Uint8Array(0);
     }
     if (data.length === 0) {
       return;
     }
-    if (this.icyMetaint <= 0) {
-      if (this.passthrough) {
-        this.appendCleanAudio(data);
-      }
-      return;
-    }
-    if (this.chunked) {
-      const decoded = this.chunkDecoder.push(data);
-      if (decoded.length > 0) {
-        this.appendCleanAudio(decoded);
-      }
-      if (this.chunkDecoder.isEnded()) {
-        this.ended = true;
-      }
-    } else {
-      this.appendCleanAudio(data);
+    this.appendDecodedAudio(data);
+    if (this.frameDecoder.isEnded()) {
+      this.ended = true;
     }
   }
 
-  private configureStripper(): void {
+  private configureFrameDecoder(chunked: boolean): void {
     console.info(`Icecast 兼容流 metaint=${this.icyMetaint}`);
-    if (this.icyMetaint > 0) {
-      this.stripper.configure(this.icyMetaint);
-    }
+    this.frameDecoder.configure(chunked, this.icyMetaint);
   }
 
   private followRedirect(location: string): void {
@@ -423,7 +404,7 @@ export class IcecastStreamRelay {
         this.ended = false;
         this.failed = false;
         this.headerBuffer = new Uint8Array(0);
-        this.chunkDecoder = new HttpChunkDecoder();
+        this.frameDecoder = new HttpAudioStreamDecoder();
         this.pendingInput = [];
         const endpoint = parseHttpEndpoint(targetUrl);
         if (endpoint === undefined) {
@@ -461,20 +442,20 @@ export class IcecastStreamRelay {
     }
   }
 
-  private appendCleanAudio(chunk: Uint8Array): void {
+  private appendDecodedAudio(chunk: Uint8Array): void {
     try {
-      const clean = this.stripper.strip(chunk);
-      if (clean.length === 0) {
+      const audio = this.frameDecoder.push(chunk);
+      if (audio.length === 0) {
         return;
       }
       if (this.dataSink !== undefined) {
-        this.dataSink(clean);
+        this.dataSink(audio);
         return;
       }
       const written = fileIo.writeSync(
         this.writeFd,
-        clean.buffer,
-        { length: clean.length }
+        audio.buffer,
+        { length: audio.length }
       );
       this.written += written;
     } catch (error) {

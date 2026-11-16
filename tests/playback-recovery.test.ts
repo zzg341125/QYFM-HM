@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  PlaybackRecoveryGate,
   buildLivePlaybackTuning,
   buildPlaybackCandidates,
   audioInterruptAction,
+  sessionPlaybackMode,
   shouldAutoPlayOnBluetoothConnect,
+  shouldStopForBluetoothDisconnect,
+  shouldResumeStoppedBluetooth,
   shouldResumeAfterForeground
 } from '../entry/src/main/ets/utils/PlaybackRecovery.ts';
 
@@ -81,4 +85,53 @@ test('starts the remembered station on Bluetooth connect only when playback is i
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, true, false, true), false);
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, true, true), false);
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, false, false), false);
+});
+
+test('allows only one playback recovery transition at a time', async () => {
+  const gate = new PlaybackRecoveryGate();
+  let finishFirst: (() => void) | undefined = undefined;
+  let secondRan = false;
+  let idleResolved = false;
+  const first = gate.run(async (): Promise<void> => {
+    await new Promise<void>((resolve: () => void): void => {
+      finishFirst = resolve;
+    });
+  });
+  const second = await gate.run(async (): Promise<void> => {
+    secondRan = true;
+  });
+
+  assert.equal(second, false);
+  assert.equal(secondRan, false);
+  assert.equal(gate.active, true);
+  const idle = gate.waitUntilIdle().then((): void => {
+    idleResolved = true;
+  });
+  assert.equal(idleResolved, false);
+  finishFirst?.();
+  assert.equal(await first, true);
+  await idle;
+  assert.equal(gate.active, false);
+  assert.equal(idleResolved, true);
+});
+
+test('hides media controls instead of publishing a paused lock-screen state', () => {
+  assert.equal(sessionPlaybackMode(true), 'playing');
+  assert.equal(sessionPlaybackMode(false), 'hidden');
+});
+
+test('stops playback immediately when the configured Bluetooth output disconnects', () => {
+  assert.equal(shouldStopForBluetoothDisconnect(true, true, false, true), true);
+  assert.equal(shouldStopForBluetoothDisconnect(true, false, true, true), true);
+  assert.equal(shouldStopForBluetoothDisconnect(false, true, false, true), false);
+  assert.equal(shouldStopForBluetoothDisconnect(true, false, false, true), false);
+  assert.equal(shouldStopForBluetoothDisconnect(true, true, false, false), false);
+});
+
+test('resumes a Bluetooth-stopped station only for the same device inside its window', () => {
+  assert.equal(shouldResumeStoppedBluetooth(true, true, true, true), true);
+  assert.equal(shouldResumeStoppedBluetooth(false, true, true, true), false);
+  assert.equal(shouldResumeStoppedBluetooth(true, false, true, true), false);
+  assert.equal(shouldResumeStoppedBluetooth(true, true, false, true), false);
+  assert.equal(shouldResumeStoppedBluetooth(true, true, true, false), false);
 });

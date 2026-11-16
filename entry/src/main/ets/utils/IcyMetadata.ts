@@ -224,3 +224,24 @@ export class IcyMetadataStripper {
     return output.slice(0, written);
   }
 }
+
+export class HttpAudioStreamDecoder {
+  private chunkDecoder: HttpChunkDecoder = new HttpChunkDecoder();
+  private metadataStripper: IcyMetadataStripper = new IcyMetadataStripper();
+  private chunked: boolean = false;
+
+  configure(chunked: boolean, icyMetaint: number): void {
+    this.chunked = chunked;
+    this.chunkDecoder = new HttpChunkDecoder();
+    this.metadataStripper.configure(icyMetaint);
+  }
+
+  push(data: Uint8Array): Uint8Array {
+    const audio = this.chunked ? this.chunkDecoder.push(data) : data;
+    return audio.length === 0 ? audio : this.metadataStripper.strip(audio);
+  }
+
+  isEnded(): boolean {
+    return this.chunked && this.chunkDecoder.isEnded();
+  }
+}

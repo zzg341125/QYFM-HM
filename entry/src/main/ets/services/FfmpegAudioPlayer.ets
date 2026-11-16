@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import ffmpeg from 'libqyfm_ffmpeg.so';
+import { AudioPcmQueue } from '../utils/AudioPcmQueue';
 import { inferAudioCodecFromUrl, isProgressiveAudioUrl } from '../utils/IcyMetadata';
 import { shouldUseManagedHlsReader } from '../utils/HlsPlaylist';
 import { HlsStreamReader } from './HlsStreamReader';
@@ -13,6 +14,8 @@ export interface FfmpegPlayerCallbacks {
   onState: (state: FfmpegPlayerState, message?: string) => void;
 }
 
+const MAX_QUEUED_PCM_SECONDS: number = 1;
+
 export class FfmpegAudioPlayer {
   private callbacks: FfmpegPlayerCallbacks;
   private relay: IcecastStreamRelay | undefined = undefined;
@@ -20,7 +23,9 @@ export class FfmpegAudioPlayer {
   private sourceUrl: string = '';
   private renderer: audio.AudioRenderer | undefined = undefined;
   private decoderHandle: number = -1;
-  private pcmQueue: ArrayBuffer[] = [];
+  private pcmQueue: AudioPcmQueue = new AudioPcmQueue(
+    ffmpeg.outputSampleRate() * ffmpeg.outputChannels() * 4 * MAX_QUEUED_PCM_SECONDS
+  );
   private writerRunning: boolean = false;
   private writerTask: Promise<void> | undefined = undefined;
   private creatingRenderer: boolean = false;
@@ -89,8 +94,15 @@ export class FfmpegAudioPlayer {
 
   async pause(): Promise<void> {
     this.paused = true;
+    this.pcmQueue.clear();
     const renderer = this.renderer;
     if (renderer !== undefined && renderer.state === audio.AudioState.STATE_RUNNING) {
+      try {
+        await renderer.flush();
+      } catch (error) {
+        const businessError = error as BusinessError;
+        console.info(`FFmpeg 暂停前清空缓冲区失败: ${businessError.message ?? '未知错误'}`);
+      }
       await renderer.pause();
     }
     this.callbacks.onState('paused');
@@ -125,7 +137,7 @@ export class FfmpegAudioPlayer {
     this.relay = undefined;
     this.hlsReader?.destroy();
     this.hlsReader = undefined;
-    this.pcmQueue = [];
+    this.pcmQueue.clear();
     if (this.decoderHandle >= 0) {
       ffmpeg.destroyDecoder(this.decoderHandle);
       this.decoderHandle = -1;
@@ -186,8 +198,8 @@ export class FfmpegAudioPlayer {
       }
       const input = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
       const pcm = ffmpeg.decode(this.decoderHandle, input, false);
-      if (pcm.byteLength > 0) {
-        this.pcmQueue.push(pcm);
+      if (pcm.byteLength > 0 && !this.paused) {
+        this.pcmQueue.enqueue(pcm);
         if (this.renderer === undefined && !this.creatingRenderer) {
           const task = this.createRenderer(this.decoderHandle).catch((error: BusinessError) => {
             this.callbacks.onState('error', error.message ?? 'AudioRenderer 启动失败');
@@ -256,7 +268,7 @@ export class FfmpegAudioPlayer {
       this.callbacks.onState('error', error.message ?? 'PCM 写入失败');
     }).finally((): void => {
       this.writerRunning = false;
-      if (this.pcmQueue.length > 0 && !this.paused && !this.stopped) {
+      if (this.pcmQueue.byteLength > 0 && !this.paused && !this.stopped) {
         this.drainPcmQueue();
       }
     });
@@ -269,8 +281,8 @@ export class FfmpegAudioPlayer {
   }
 
   private async writeNext(renderer: audio.AudioRenderer): Promise<void> {
-    while (!this.paused && !this.stopped && this.pcmQueue.length > 0) {
-      const pcm = this.pcmQueue.shift();
+    while (!this.paused && !this.stopped && this.pcmQueue.byteLength > 0) {
+      const pcm = this.pcmQueue.dequeue();
       if (pcm === undefined) {
         return;
       }

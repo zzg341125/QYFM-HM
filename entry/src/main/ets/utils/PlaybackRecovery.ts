@@ -25,6 +25,42 @@ export interface PlaybackCandidate {
   name: string;
 }
 
+export class PlaybackRecoveryGate {
+  private running: boolean = false;
+  private idleResolvers: Array<() => void> = [];
+
+  get active(): boolean {
+    return this.running;
+  }
+
+  waitUntilIdle(): Promise<void> {
+    if (!this.running) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve: () => void): void => {
+      this.idleResolvers.push(resolve);
+    });
+  }
+
+  async run(operation: () => Promise<void>): Promise<boolean> {
+    if (this.running) {
+      return false;
+    }
+    this.running = true;
+    try {
+      await operation();
+      return true;
+    } finally {
+      this.running = false;
+      const resolvers = this.idleResolvers;
+      this.idleResolvers = [];
+      resolvers.forEach((resolve: () => void): void => {
+        resolve();
+      });
+    }
+  }
+}
+
 export function buildLivePlaybackTuning(fastStart: boolean): LivePlaybackTuning {
   const startWaterline = fastStart ? 0.25 : 0.8;
   return {
@@ -107,4 +143,28 @@ export function shouldAutoPlayOnBluetoothConnect(
   hasStation: boolean
 ): boolean {
   return enabled && !isPlaying && !buffering && hasStation;
+}
+
+export function shouldStopForBluetoothDisconnect(
+  enabled: boolean,
+  isPlaying: boolean,
+  buffering: boolean,
+  hasStation: boolean
+): boolean {
+  return enabled && (isPlaying || buffering) && hasStation;
+}
+
+export function shouldResumeStoppedBluetooth(
+  enabled: boolean,
+  sameDevice: boolean,
+  insideWindow: boolean,
+  hasStation: boolean
+): boolean {
+  return enabled && sameDevice && insideWindow && hasStation;
+}
+
+export type SessionPlaybackMode = 'playing' | 'hidden';
+
+export function sessionPlaybackMode(isPlaying: boolean): SessionPlaybackMode {
+  return isPlaying ? 'playing' : 'hidden';
 }

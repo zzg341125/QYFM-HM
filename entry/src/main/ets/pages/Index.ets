@@ -1808,8 +1808,8 @@ struct Index {
         ListItem() {
           this.SettingsSwitchRow(
             '⇠',
-            '蓝牙断开自动暂停',
-            '蓝牙音频断开时立即暂停，不再从手机扬声器继续播放。',
+            '蓝牙断开立即停止',
+            '蓝牙音频断开时停止播放并移除锁屏暂停卡片，不再从手机扬声器继续播放。',
             'pauseOnBluetoothDisconnect'
           )
         }
@@ -1843,7 +1843,7 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('关于')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.28 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.29 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }
