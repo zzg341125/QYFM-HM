@@ -61,8 +61,11 @@ export class PlaybackRecoveryGate {
   }
 }
 
-export function buildLivePlaybackTuning(fastStart: boolean): LivePlaybackTuning {
-  const startWaterline = fastStart ? 0.25 : 0.8;
+export function buildLivePlaybackTuning(
+  fastStart: boolean,
+  liveHls: boolean = false
+): LivePlaybackTuning {
+  const startWaterline = liveHls ? 1.5 : (fastStart ? 0.5 : 1);
   return {
     preferredBufferDuration: 30,
     preferredBufferDurationForPlaying: startWaterline,
@@ -172,7 +175,12 @@ export function sessionPlaybackMode(isPlaying: boolean): SessionPlaybackMode {
 export function shouldRecoverFromBufferStall(
   isPlaying: boolean,
   buffering: boolean,
+  fallbackAvailable: boolean,
   bufferingMilliseconds: number
 ): boolean {
-  return isPlaying && buffering && bufferingMilliseconds >= 1500;
+  return fallbackAvailable && isPlaying && buffering && bufferingMilliseconds >= 1500;
+}
+
+export function liveReconnectDelayMs(attempt: number): number {
+  return Math.min(4000, 500 * Math.pow(2, Math.max(0, attempt)));
 }

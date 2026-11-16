@@ -16,6 +16,7 @@ import {
   parseHttpRedirectLocation
 } from '../utils/IcyMetadata';
 import { resolveHlsUrl } from '../utils/HlsPlaylist';
+import { liveReconnectDelayMs } from '../utils/PlaybackRecovery';
 
 const PREPARE_TIMEOUT_MS: number = 4000;
 const PLAYBACK_POLL_MS: number = 20;
@@ -70,18 +71,21 @@ export class IcecastStreamRelay {
   private dataSink: AudioChunkSink | undefined = undefined;
   private sourceUrl: string = '';
   private redirectCount: number = 0;
+  private reconnecting: boolean = false;
+  private reconnectAttempt: number = 0;
+  private reconnectTimer: number = -1;
 
   private readonly socketMessageListener = (info: socket.SocketMessageInfo): void => {
     this.handleSocketMessage(info.message);
   };
 
   private readonly socketCloseListener = (): void => {
-    this.ended = true;
+    this.handleConnectionEnded('TCP 连接已关闭');
   };
 
   private readonly socketErrorListener = (error: BusinessError): void => {
-    this.failed = true;
     console.error(`Icecast TCP 连接失败: ${error.message ?? '未知错误'}`);
+    this.handleConnectionEnded(`TCP 连接失败: ${error.message ?? '未知错误'}`);
   };
 
   static supports(url: string): boolean {
@@ -100,7 +104,17 @@ export class IcecastStreamRelay {
     console.info(`FFmpeg 直播输入启动: ${url}`);
     this.dataSink = dataSink;
     this.sourceUrl = url;
-    const endpoint = parseHttpEndpoint(url);
+    try {
+      await this.openStream();
+    } catch (error) {
+      this.destroy();
+      const caught = error as Error;
+      throw caught;
+    }
+  }
+
+  private async openStream(): Promise<void> {
+    const endpoint = parseHttpEndpoint(this.sourceUrl);
     if (endpoint !== undefined) {
       if (endpoint.secure) {
         await this.startTlsRequest(endpoint);
@@ -108,12 +122,11 @@ export class IcecastStreamRelay {
         await this.startTcpRequest(endpoint);
       }
     } else {
-      this.startHttpRequest(url);
+      this.startHttpRequest(this.sourceUrl);
     }
     const deadline = Date.now() + PREPARE_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (this.failed) {
-        this.destroy();
         throw new Error('FFmpeg 音频输入连接失败');
       }
       if (this.headerKnown) {
@@ -123,7 +136,6 @@ export class IcecastStreamRelay {
         setTimeout(resolve, PLAYBACK_POLL_MS);
       });
     }
-    this.destroy();
     throw new Error('FFmpeg 音频输入连接超时');
   }
 
@@ -184,6 +196,10 @@ export class IcecastStreamRelay {
       return;
     }
     this.destroyed = true;
+    if (this.reconnectTimer >= 0) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = -1;
+    }
     try {
       this.request?.off('headersReceive');
       this.request?.off('dataReceive');
@@ -280,7 +296,7 @@ export class IcecastStreamRelay {
   private buildRequest(endpoint: HttpEndpoint): string {
     return `GET ${endpoint.path} HTTP/1.1\r\n` +
       `Host: ${endpoint.hostHeader}\r\n` +
-      'User-Agent: QYFM-HarmonyOS/1.0.37 (AVPlayer)\r\n' +
+      'User-Agent: QYFM-HarmonyOS/1.0.38 (AVPlayer)\r\n' +
       'Accept: */*\r\n' +
       'Icy-MetaData: 1\r\n' +
       'Connection: keep-alive\r\n\r\n';
@@ -314,10 +330,10 @@ export class IcecastStreamRelay {
       this.appendDecodedAudio(new Uint8Array(chunk));
     });
     request.on('dataEnd', (): void => {
-      this.ended = true;
+      this.handleConnectionEnded('HTTP 数据流已结束');
     });
     const headers: Record<string, string> = {
-      'User-Agent': 'QYFM-HarmonyOS/1.0.37 (AVPlayer)',
+      'User-Agent': 'QYFM-HarmonyOS/1.0.38 (AVPlayer)',
       'Icy-MetaData': '1',
       'Accept': '*/*'
     };
@@ -422,6 +438,19 @@ export class IcecastStreamRelay {
   }
 
   private async closeSocketsForRedirect(): Promise<void> {
+    const request = this.request;
+    this.request = undefined;
+    if (request !== undefined) {
+      try {
+        request.off('headersReceive');
+        request.off('dataReceive');
+        request.off('dataEnd');
+        request.destroy();
+      } catch (error) {
+        const businessError = error as BusinessError;
+        console.info(`关闭 Icecast HTTP 连接失败: ${businessError.message ?? '未知错误'}`);
+      }
+    }
     const tcp = this.tcpSocket;
     this.tcpSocket = undefined;
     if (tcp !== undefined) {
@@ -439,6 +468,51 @@ export class IcecastStreamRelay {
       tls.off('error', this.socketErrorListener);
       await tls.close().catch((): void => {
       });
+    }
+  }
+
+  private handleConnectionEnded(reason: string): void {
+    if (this.destroyed || this.reconnecting || this.reconnectTimer >= 0) {
+      return;
+    }
+    this.reconnecting = true;
+    this.ended = true;
+    const delay = liveReconnectDelayMs(this.reconnectAttempt);
+    console.info(`直播连接中断，${delay}ms 后重连: ${reason}`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = -1;
+      this.reconnectLiveStream().catch((error: BusinessError): void => {
+        console.error(`直播自动重连失败: ${error.message ?? '未知错误'}`);
+      });
+    }, delay);
+  }
+
+  private async reconnectLiveStream(): Promise<void> {
+    if (this.destroyed || this.dataSink === undefined) {
+      return;
+    }
+    this.reconnecting = true;
+    await this.closeSocketsForRedirect();
+    this.headerKnown = false;
+    this.icyMetaint = 0;
+    this.chunked = false;
+    this.headerBuffer = new Uint8Array(0);
+    this.frameDecoder = new HttpAudioStreamDecoder();
+    this.pendingInput = [];
+    this.ended = false;
+    this.failed = false;
+    try {
+      await this.openStream();
+      this.reconnectAttempt = 0;
+      this.reconnecting = false;
+      console.info('直播连接已自动恢复');
+    } catch (error) {
+      this.reconnecting = false;
+      this.reconnectAttempt++;
+      const businessError = error as BusinessError;
+      this.handleConnectionEnded(
+        `第 ${this.reconnectAttempt} 次重连失败: ${businessError.message ?? '未知错误'}`
+      );
     }
   }
 

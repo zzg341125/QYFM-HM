@@ -148,6 +148,6 @@ test('detects AAC and MP3 HLS segments and rejects unsupported transport streams
   assert.equal(detectHlsSegmentCodec(new Uint8Array([0x47, 0x00, 0x10, 0x00])), undefined);
 });
 
-test('allows generic HLS as a compatibility fallback while keeping native playback first', () => {
-  assert.equal(shouldUseManagedHlsReader('https://example.com/live/channel.m3u8'), true);
+test('does not send unknown MPEG-TS HLS to the AAC/MP3 segment reader', () => {
+  assert.equal(shouldUseManagedHlsReader('https://example.com/live/channel.m3u8'), false);
 });

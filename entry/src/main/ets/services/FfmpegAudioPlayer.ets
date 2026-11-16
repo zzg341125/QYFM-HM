@@ -6,7 +6,7 @@ import { AudioPcmQueue, AudioPcmQueueReader } from '../utils/AudioPcmQueue';
 import {
   pcmStartWatermark,
   pcmQueueDurationSeconds,
-  shouldPrimeDecoder,
+  shouldDecodeBatchedInput,
   shouldReconnectAfterPause,
   shouldStartPcmRenderer
 } from '../utils/FfmpegDecodePolicy';
@@ -47,6 +47,10 @@ export class FfmpegAudioPlayer {
   private managedHls: boolean = false;
   private pcmUnderrunEvents: number = 0;
   private lastPcmUnderrunLogAt: number = 0;
+  private networkInputBytes: number = 0;
+  private decodedInputBytes: number = 0;
+  private decodedOutputBytes: number = 0;
+  private lastMetricsLogAt: number = 0;
 
   private readonly audioInterruptListener = (event: audio.InterruptEvent): void => {
     const begin = event.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN;
@@ -277,12 +281,14 @@ export class FfmpegAudioPlayer {
       return;
     }
     const copy = chunk.slice();
+    this.networkInputBytes += copy.byteLength;
     this.compressedQueue.enqueue(copy.buffer);
     this.scheduleDecode();
   }
 
   private scheduleDecode(): void {
-    if (this.decodeTask !== undefined || this.stopped || this.paused) {
+    if (this.decodeTask !== undefined || this.stopped || this.paused ||
+      !shouldDecodeBatchedInput(this.compressedQueue.byteLength)) {
       return;
     }
     const task = this.processDecodeQueue();
@@ -301,8 +307,9 @@ export class FfmpegAudioPlayer {
   }
 
   private async processDecodeQueue(): Promise<void> {
-    while (!this.stopped && !this.paused && this.compressedQueue.byteLength > 0) {
-      const input = this.compressedQueue.dequeue();
+    while (!this.stopped && !this.paused &&
+      shouldDecodeBatchedInput(this.compressedQueue.byteLength)) {
+      const input = this.compressedQueue.dequeueCombined(8192);
       if (input === undefined) {
         return;
       }
@@ -310,9 +317,9 @@ export class FfmpegAudioPlayer {
       if (decoderJustCreated) {
         this.decoderHandle = ffmpeg.createDecoder(this.codecForChunk(new Uint8Array(input)));
       }
-      const pcm = shouldPrimeDecoder(decoderJustCreated, input.byteLength)
-        ? ffmpeg.decode(this.decoderHandle, input, false)
-        : await ffmpeg.decodeAsync(this.decoderHandle, input, false);
+      const pcm = await ffmpeg.decodeAsync(this.decoderHandle, input, false);
+      this.decodedInputBytes += input.byteLength;
+      this.decodedOutputBytes += pcm.byteLength;
       if (this.stopped) {
         return;
       }
@@ -325,6 +332,15 @@ export class FfmpegAudioPlayer {
   private handleDecodedPcm(pcm: ArrayBuffer): void {
     try {
       this.pcmQueue.enqueue(pcm);
+      const now = Date.now();
+      if (now - this.lastMetricsLogAt >= 15000) {
+        this.lastMetricsLogAt = now;
+        console.info(
+          `FFmpeg 运行指标: 网络${this.networkInputBytes}字节, ` +
+          `解码输入${this.decodedInputBytes}字节, 解码输出${this.decodedOutputBytes}字节, ` +
+          `PCM余量${this.pcmQueue.byteLength}字节, 欠载${this.pcmUnderrunEvents}`
+        );
+      }
       if (this.renderer === undefined && !this.creatingRenderer &&
         shouldStartPcmRenderer(this.fastStart, this.pcmQueue.byteLength, this.managedHls)) {
         console.info(

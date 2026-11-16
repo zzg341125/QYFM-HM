@@ -26,6 +26,7 @@ import {
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
 import { safeSessionArtwork } from '../utils/SessionArtwork';
 import { buildDecoderAttemptOrder, DecoderEngine } from '../utils/DecoderSelection';
+import { isHlsPlaylistUrl } from '../utils/HlsPlaylist';
 
 export interface RadioSnapshot {
   currentStation: Station | undefined;
@@ -41,7 +42,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.37 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.38 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -141,7 +142,10 @@ export class RadioController {
 
   async applySettings(settings: AppSettings): Promise<void> {
     this.settings = settings;
-    this.tuning = buildLivePlaybackTuning(settings.fastStart);
+    this.tuning = buildLivePlaybackTuning(
+      settings.fastStart,
+      this.currentStation !== undefined && isHlsPlaylistUrl(this.currentStation.streamUrl)
+    );
     this.bluetooth.setResumeWindowMinutes(settings.resumeWindowMinutes);
     if (this.shouldMonitorBluetooth()) {
       this.bluetooth.start();
@@ -198,7 +202,10 @@ export class RadioController {
     this.clearRecoveryTimers();
     this.retryCount = 0;
     this.candidatePosition = 0;
-    this.tuning = buildLivePlaybackTuning(this.settings.fastStart);
+    this.tuning = buildLivePlaybackTuning(
+      this.settings.fastStart,
+      isHlsPlaylistUrl(station.streamUrl)
+    );
     this.bluetooth.cancelPending();
     this.isPlaying = false;
     const migratedStation = this.migrateLegacyStation(station);
@@ -380,6 +387,10 @@ export class RadioController {
       favorite: station.favorite
     };
     this.currentStation = nextStation;
+    this.tuning = buildLivePlaybackTuning(
+      this.settings.fastStart,
+      isHlsPlaylistUrl(candidate.url)
+    );
     this.decoderAttemptsTried.clear();
     this.statusText = station.name;
     this.notify();
@@ -883,8 +894,11 @@ export class RadioController {
     this.clearBufferStallRecovery();
     this.bufferStallTimer = setTimeout(() => {
       this.bufferStallTimer = -1;
+      const liveHls = this.currentStation !== undefined &&
+        isHlsPlaylistUrl(this.currentStation.streamUrl) &&
+        FfmpegAudioPlayer.supports(this.currentStation.streamUrl);
       if (this.player === player &&
-        shouldRecoverFromBufferStall(this.isPlaying, this.buffering, 1500)) {
+        shouldRecoverFromBufferStall(this.isPlaying, this.buffering, liveHls, 1500)) {
         this.handlePlaybackFailure('直播连续缓冲超过安全阈值', player);
       }
     }, 1500);

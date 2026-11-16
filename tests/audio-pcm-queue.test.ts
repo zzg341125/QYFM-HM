@@ -47,3 +47,20 @@ test('fills exact renderer buffers across queued PCM blocks', () => {
   assert.equal(reader.readInto(second), 2);
   assert.deepEqual(Array.from(second), [5, 6, 0, 0]);
 });
+
+test('coalesces adjacent decode input into one bounded decode job', () => {
+  const queue = new AudioPcmQueue(32);
+  queue.enqueue(new Uint8Array([1, 2, 3]).buffer);
+  queue.enqueue(new Uint8Array([4, 5, 6]).buffer);
+  queue.enqueue(new Uint8Array([7, 8, 9]).buffer);
+
+  assert.deepEqual(
+    Array.from(new Uint8Array(queue.dequeueCombined(8) ?? new ArrayBuffer(0))),
+    [1, 2, 3, 4, 5, 6]
+  );
+  assert.deepEqual(
+    Array.from(new Uint8Array(queue.dequeueCombined(8) ?? new ArrayBuffer(0))),
+    [7, 8, 9]
+  );
+  assert.equal(queue.byteLength, 0);
+});

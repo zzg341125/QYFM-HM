@@ -42,6 +42,38 @@ export class AudioPcmQueue {
     return pcm;
   }
 
+  dequeueCombined(maxBytes: number): ArrayBuffer | undefined {
+    if (this.items.length === 0) {
+      return undefined;
+    }
+    const limit = Math.max(1, Math.floor(maxBytes));
+    const selected: ArrayBuffer[] = [];
+    let total = 0;
+    while (this.items.length > 0) {
+      const next = this.items[0];
+      if (selected.length > 0 && total + next.byteLength > limit) {
+        break;
+      }
+      this.items.shift();
+      selected.push(next);
+      total += next.byteLength;
+      this.bytes -= next.byteLength;
+      if (total >= limit) {
+        break;
+      }
+    }
+    if (selected.length === 1) {
+      return selected[0];
+    }
+    const combined = new Uint8Array(total);
+    let offset = 0;
+    selected.forEach((chunk: ArrayBuffer): void => {
+      combined.set(new Uint8Array(chunk), offset);
+      offset += chunk.byteLength;
+    });
+    return combined.buffer;
+  }
+
   clear(): void {
     this.items = [];
     this.bytes = 0;

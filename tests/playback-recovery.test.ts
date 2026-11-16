@@ -10,22 +10,31 @@ import {
   shouldStopForBluetoothDisconnect,
   shouldResumeStoppedBluetooth,
   shouldResumeAfterForeground,
-  shouldRecoverFromBufferStall
+  shouldRecoverFromBufferStall,
+  liveReconnectDelayMs
 } from '../entry/src/main/ets/utils/PlaybackRecovery.ts';
 
 test('uses fast start with segment-safe buffering and watchdog timing', () => {
   assert.deepEqual(buildLivePlaybackTuning(true), {
     preferredBufferDuration: 30,
-    preferredBufferDurationForPlaying: 0.25,
-    thresholdForAutoQuickPlay: 2.25,
+    preferredBufferDurationForPlaying: 0.5,
+    thresholdForAutoQuickPlay: 2.5,
     watchdogTimeoutMs: 15000,
     maxAutoRetries: 2,
     refreshRetryDelayMs: 600
   });
   assert.deepEqual(buildLivePlaybackTuning(false), {
     preferredBufferDuration: 30,
-    preferredBufferDurationForPlaying: 0.8,
-    thresholdForAutoQuickPlay: 2.8,
+    preferredBufferDurationForPlaying: 1,
+    thresholdForAutoQuickPlay: 3,
+    watchdogTimeoutMs: 15000,
+    maxAutoRetries: 2,
+    refreshRetryDelayMs: 600
+  });
+  assert.deepEqual(buildLivePlaybackTuning(true, true), {
+    preferredBufferDuration: 30,
+    preferredBufferDurationForPlaying: 1.5,
+    thresholdForAutoQuickPlay: 3.5,
     watchdogTimeoutMs: 15000,
     maxAutoRetries: 2,
     refreshRetryDelayMs: 600
@@ -138,8 +147,16 @@ test('resumes a Bluetooth-stopped station only for the same device inside its wi
 });
 
 test('falls back only when a live stream remains buffering beyond the grace period', () => {
-  assert.equal(shouldRecoverFromBufferStall(true, true, 1499), false);
-  assert.equal(shouldRecoverFromBufferStall(true, true, 1500), true);
-  assert.equal(shouldRecoverFromBufferStall(false, true, 5000), false);
-  assert.equal(shouldRecoverFromBufferStall(true, false, 5000), false);
+  assert.equal(shouldRecoverFromBufferStall(true, true, true, 1499), false);
+  assert.equal(shouldRecoverFromBufferStall(true, true, true, 1500), true);
+  assert.equal(shouldRecoverFromBufferStall(true, true, false, 5000), false);
+  assert.equal(shouldRecoverFromBufferStall(false, true, true, 5000), false);
+  assert.equal(shouldRecoverFromBufferStall(true, false, true, 5000), false);
+});
+
+test('uses bounded exponential backoff for dropped live connections', () => {
+  assert.equal(liveReconnectDelayMs(0), 500);
+  assert.equal(liveReconnectDelayMs(1), 1000);
+  assert.equal(liveReconnectDelayMs(2), 2000);
+  assert.equal(liveReconnectDelayMs(8), 4000);
 });

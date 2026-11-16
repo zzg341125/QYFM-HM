@@ -46,8 +46,7 @@ export function shouldUseManagedHlsReader(url: string): boolean {
     /^https?:\/\/live\.(?:xmcdn|ximalaya)\.com(?::\d+)?\//i.test(trimmed) ||
     /^https?:\/\/stream\.ginnet\.cloud\//i.test(trimmed) ||
     /^https?:\/\/flv\.ccdntech\.com\//i.test(trimmed) ||
-    /^https?:\/\/streamak0138\.akamaized\.net\//i.test(trimmed) ||
-    isHlsPlaylistUrl(trimmed);
+    /^https?:\/\/streamak0138\.akamaized\.net\//i.test(trimmed);
 }
 
 function normalizePath(path: string): string {
