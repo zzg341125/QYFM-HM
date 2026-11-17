@@ -46,6 +46,14 @@ interface ArchiveSettings {
   webdavUser: string;
   webdavPassword: string;
   webdavFile: string;
+  bluetoothBindings: ArchiveBluetoothBinding[];
+}
+
+interface ArchiveBluetoothBinding {
+  deviceId: string;
+  deviceName: string;
+  autoPlay: boolean;
+  lastConnectedAt: number;
 }
 
 export interface QyfmArchiveResult {
@@ -106,7 +114,8 @@ function defaultArchiveSettings(): ArchiveSettings {
     webdavUrl: '',
     webdavUser: '',
     webdavPassword: '',
-    webdavFile: 'qyfm-backup.zip'
+    webdavFile: 'qyfm-backup.zip',
+    bluetoothBindings: []
   };
 }
 
@@ -163,6 +172,16 @@ export function serializeQyfmBackupSettings(settings: ArchiveSettings): string {
     ['webdavUser', encodeValue(settings.webdavUser)],
     ['webdavFile', encodeValue(settings.webdavFile)]
   ];
+  fields.push(['bluetoothBindingCount', settings.bluetoothBindings.length.toString()]);
+  settings.bluetoothBindings.slice(0, 3).forEach((binding: ArchiveBluetoothBinding, index: number) => {
+    fields.push([`bluetoothBinding.${index}.deviceId`, encodeValue(binding.deviceId)]);
+    fields.push([`bluetoothBinding.${index}.deviceName`, encodeValue(binding.deviceName)]);
+    fields.push([`bluetoothBinding.${index}.autoPlay`, binding.autoPlay ? '1' : '0']);
+    fields.push([
+      `bluetoothBinding.${index}.lastConnectedAt`,
+      binding.lastConnectedAt.toString()
+    ]);
+  });
   return `${fields.map((field: [string, string]): string => `${field[0]}=${field[1]}`).join('\n')}\n`;
 }
 
@@ -213,6 +232,19 @@ function parseSettings(text: string): ArchiveSettings {
   settings.webdavUrl = decodeValue(values.get('webdavUrl') ?? settings.webdavUrl);
   settings.webdavUser = decodeValue(values.get('webdavUser') ?? settings.webdavUser);
   settings.webdavFile = decodeValue(values.get('webdavFile') ?? settings.webdavFile);
+  const bindingCount = Math.min(3, Math.max(0, Number(values.get('bluetoothBindingCount')) || 0));
+  for (let index = 0; index < bindingCount; index++) {
+    const deviceId = decodeValue(values.get(`bluetoothBinding.${index}.deviceId`) ?? '');
+    const lastConnectedAt = Number(values.get(`bluetoothBinding.${index}.lastConnectedAt`));
+    if (deviceId.length > 0) {
+      settings.bluetoothBindings.push({
+        deviceId: deviceId,
+        deviceName: decodeValue(values.get(`bluetoothBinding.${index}.deviceName`) ?? ''),
+        autoPlay: values.get(`bluetoothBinding.${index}.autoPlay`) === '1',
+        lastConnectedAt: Number.isFinite(lastConnectedAt) ? lastConnectedAt : 0
+      });
+    }
+  }
   return settings;
 }
 

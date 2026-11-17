@@ -24,6 +24,7 @@ import { formatSleepTimerEnd, normalizeResumeWindowMinutes } from '../utils/Time
 import { moveListItem } from '../utils/ListOrdering';
 import { BackupArchiveService, QyfmBackupArchivePackage } from '../services/BackupArchiveService';
 import { isQyfmBackupPlaylist, parseQyfmBackupArchive } from '../utils/QyfmBackupArchive';
+import { BluetoothBinding } from '../utils/BluetoothBindings';
 import {
   StationSwipeAction,
   stationRowTapAction,
@@ -1030,6 +1031,16 @@ struct Index {
       settings.webdavUrl = restored.settings.webdavUrl;
       settings.webdavUser = restored.settings.webdavUser;
       settings.webdavFile = restored.settings.webdavFile;
+      settings.bluetoothBindings = restored.settings.bluetoothBindings.map(
+        (binding): BluetoothBinding => {
+          return {
+            deviceId: binding.deviceId,
+            deviceName: binding.deviceName,
+            autoPlay: binding.autoPlay,
+            lastConnectedAt: binding.lastConnectedAt
+          };
+        }
+      );
       this.settings = settings;
       this.palette = findTheme(this.settings.themeId);
       this.currentStation = this.stations.length > 0 ? this.stations[0] : undefined;

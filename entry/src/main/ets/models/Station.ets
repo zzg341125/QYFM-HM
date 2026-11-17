@@ -1,3 +1,5 @@
+import { BluetoothBinding } from '../utils/BluetoothBindings';
+
 export interface StreamLine {
   id: string;
   name: string;
@@ -43,6 +45,7 @@ export interface AppSettings {
   webdavUser: string;
   webdavPassword: string;
   webdavFile: string;
+  bluetoothBindings: BluetoothBinding[];
 }
 
 export interface StationBackup {
@@ -78,6 +81,7 @@ export interface PortableSettings {
   webdavUrl: string;
   webdavUser: string;
   webdavFile: string;
+  bluetoothBindings: BluetoothBinding[];
 }
 
 export interface BackupResult {
@@ -109,7 +113,8 @@ export function createDefaultSettings(): AppSettings {
     webdavUrl: '',
     webdavUser: '',
     webdavPassword: '',
-    webdavFile: 'qyfm-backup.zip'
+    webdavFile: 'qyfm-backup.zip',
+    bluetoothBindings: []
   };
 }
 
@@ -163,6 +168,14 @@ export function copySettings(settings: AppSettings): AppSettings {
     webdavUrl: settings.webdavUrl,
     webdavUser: settings.webdavUser,
     webdavPassword: settings.webdavPassword,
-    webdavFile: settings.webdavFile
+    webdavFile: settings.webdavFile,
+    bluetoothBindings: settings.bluetoothBindings.map((binding: BluetoothBinding): BluetoothBinding => {
+      return {
+        deviceId: binding.deviceId,
+        deviceName: binding.deviceName,
+        autoPlay: binding.autoPlay,
+        lastConnectedAt: binding.lastConnectedAt
+      };
+    })
   };
 }

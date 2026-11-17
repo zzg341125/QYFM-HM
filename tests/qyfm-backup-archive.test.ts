@@ -81,7 +81,18 @@ test('restores the specified QYFM ZIP order, lines, metadata and bundled icons',
     webdavUrl: '',
     webdavUser: '',
     webdavPassword: '',
-    webdavFile: 'qyfm-backup.json'
+    webdavFile: 'qyfm-backup.json',
+    bluetoothBindings: [{
+      deviceId: 'car-audio',
+      deviceName: 'Car Audio',
+      autoPlay: true,
+      lastConnectedAt: 1000
+    }, {
+      deviceId: 'headphones',
+      deviceName: 'Headphones',
+      autoPlay: false,
+      lastConnectedAt: 2000
+    }]
   };
   settings.dynamicColor = false;
   settings.resumeWindowMinutes = 45;
@@ -102,6 +113,7 @@ test('restores the specified QYFM ZIP order, lines, metadata and bundled icons',
   assert.equal(news?.favorite, true);
   assert.equal(parsed.settings.dynamicColor, false);
   assert.equal(parsed.settings.resumeWindowMinutes, 45);
+  assert.deepEqual(parsed.settings.bluetoothBindings, settings.bluetoothBindings);
   assert.equal(serializeQyfmBackupSettings(settings).includes('must-not-be-exported'), false);
 });
 
@@ -118,4 +130,10 @@ test('does not mistake an Android v1.0.8 M3U for the QYFM ZIP format', () => {
     false
   );
   assert.equal(isQyfmBackupPlaylist('#EXTM3U\n#EXT-QYFM-FORMAT:1\n'), true);
+});
+
+test('restores an empty Bluetooth binding list from older settings files', () => {
+  const playlist = serializeQyfmBackupPlaylist(stations, new Map<string, string>());
+  const parsed = parseQyfmBackupArchive(playlist, 'news\nmusic\n', '', []);
+  assert.deepEqual(parsed.settings.bluetoothBindings, []);
 });

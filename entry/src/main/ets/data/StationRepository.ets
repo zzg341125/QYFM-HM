@@ -13,11 +13,30 @@ import {
 } from '../models/Station';
 import { PRESET_STATIONS } from './PresetStations';
 import { orderStationsByBackup } from '../utils/BackupModel';
+import { BluetoothBinding } from '../utils/BluetoothBindings';
 
 const PREFERENCES_NAME: string = 'qyfm_store';
 const STATIONS_KEY: string = 'stations';
 const SETTINGS_KEY: string = 'settings';
 const BACKUP_SCHEMA_VERSION: number = 2;
+
+function normalizeBluetoothBindings(bindings: BluetoothBinding[] | undefined): BluetoothBinding[] {
+  if (!Array.isArray(bindings)) {
+    return [];
+  }
+  return bindings
+    .filter((binding: BluetoothBinding): boolean =>
+      typeof binding.deviceId === 'string' && binding.deviceId.trim().length > 0)
+    .slice(0, 3)
+    .map((binding: BluetoothBinding): BluetoothBinding => {
+      return {
+        deviceId: binding.deviceId.trim(),
+        deviceName: typeof binding.deviceName === 'string' ? binding.deviceName.trim() : '',
+        autoPlay: binding.autoPlay === true,
+        lastConnectedAt: Number.isFinite(binding.lastConnectedAt) ? binding.lastConnectedAt : 0
+      };
+    });
+}
 
 export class StationRepository {
   private store: preferences.Preferences | undefined = undefined;
@@ -103,7 +122,8 @@ export class StationRepository {
         webdavUrl: parsed.webdavUrl ?? defaults.webdavUrl,
         webdavUser: parsed.webdavUser ?? defaults.webdavUser,
         webdavPassword: parsed.webdavPassword ?? defaults.webdavPassword,
-        webdavFile: (parsed.webdavFile ?? defaults.webdavFile).replace(/\.[^.]+$/, '.zip')
+        webdavFile: (parsed.webdavFile ?? defaults.webdavFile).replace(/\.[^.]+$/, '.zip'),
+        bluetoothBindings: normalizeBluetoothBindings(parsed.bluetoothBindings)
       };
     } catch (error) {
       const businessError = error as BusinessError;
@@ -142,7 +162,17 @@ export class StationRepository {
       lastStationId: settings.lastStationId,
       webdavUrl: settings.webdavUrl,
       webdavUser: settings.webdavUser,
-      webdavFile: settings.webdavFile
+      webdavFile: settings.webdavFile,
+      bluetoothBindings: settings.bluetoothBindings.map(
+        (binding: BluetoothBinding): BluetoothBinding => {
+          return {
+            deviceId: binding.deviceId,
+            deviceName: binding.deviceName,
+            autoPlay: binding.autoPlay,
+            lastConnectedAt: binding.lastConnectedAt
+          };
+        }
+      )
     };
     const backup: StationBackup = {
       schemaVersion: BACKUP_SCHEMA_VERSION,
@@ -205,6 +235,8 @@ export class StationRepository {
       defaultSettings.webdavUrl = backup.settings.webdavUrl ?? defaultSettings.webdavUrl;
       defaultSettings.webdavUser = backup.settings.webdavUser ?? defaultSettings.webdavUser;
       defaultSettings.webdavFile = backup.settings.webdavFile ?? defaultSettings.webdavFile;
+      defaultSettings.bluetoothBindings =
+        normalizeBluetoothBindings(backup.settings.bluetoothBindings);
     }
     return {
       stations: ordered,
