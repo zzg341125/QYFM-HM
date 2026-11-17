@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add persistent three-device Bluetooth profiles, device-specific auto-play, call pause/resume, and retain HarmonyOS background playback with a minimal metadata-free AVSession.
+**Goal:** Add persistent three-device Bluetooth profiles, device-specific auto-play, call pause/resume, and retain HarmonyOS background playback with a valid AVSession.
 
-**Architecture:** Keep playback and Bluetooth monitoring in the existing `RadioController`. Add a pure Bluetooth-binding model for persistence and matching, extend `BluetoothResumeManager` to report connected device names, and keep a metadata-free AVSession so background audio is not suspended.
+**Architecture:** Keep playback and Bluetooth monitoring in the existing `RadioController`. Add a pure Bluetooth-binding model for persistence and matching, extend `BluetoothResumeManager` to report connected device names, and keep a valid title-bearing AVSession without artwork so background audio is not suspended.
 
 **Tech Stack:** HarmonyOS NEXT, ArkTS/ArkUI, `@kit.ConnectivityKit`, `@kit.AudioKit`, `@kit.BackgroundTasksKit`, Hvigor, Node test runner.
 
@@ -14,7 +14,7 @@
 
 - Store at most 3 Bluetooth devices.
 - Device auto-play ignores the resume-window duration.
-- Do not publish artwork or media metadata to AVSession; keep only the minimal background-playback session.
+- Publish the current station title and fixed app artist to AVSession, but do not publish artwork.
 - Keep the system-required background continuous-task notification.
 - A normally installed app cannot revive after force-stop, system kill, or first install without OS auto-start permission.
 - Keep existing user data and backup compatibility.
@@ -103,7 +103,7 @@ Assert that a new device is added, an existing device keeps `autoPlay` while upd
 - Modify: `tests/playback-recovery.test.ts`
 
 **Interfaces:**
-- Produces: an active `audio` AVSession without title or artwork metadata while playing.
+- Produces: an active `audio` AVSession with station title and no artwork while playing.
 - Preserves: background playback, media commands, continuous audio background task and AudioInterrupt handling.
 
 **Steps:**
