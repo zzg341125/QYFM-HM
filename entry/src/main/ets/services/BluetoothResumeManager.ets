@@ -1,11 +1,11 @@
-import { a2dp, baseProfile, constant } from '@kit.ConnectivityKit';
+import { a2dp, baseProfile, connection, constant } from '@kit.ConnectivityKit';
 import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { normalizeResumeWindowMinutes } from '../utils/TimeSettings';
 
 export interface BluetoothResumeCallbacks {
   onBluetoothLost: (deviceId: string) => void;
-  onBluetoothRestored: (deviceId: string) => void;
+  onBluetoothConnected: (deviceId: string, deviceName: string) => void;
   onWindowExpired: (deviceId: string) => void;
   onDiagnostics: (message: string) => void;
 }
@@ -141,7 +141,14 @@ export class BluetoothResumeManager {
       this.clearExpiryTimer();
     }
     this.lastActiveDeviceId = event.deviceId;
-    this.callbacks.onBluetoothRestored(event.deviceId);
+    let deviceName = '';
+    try {
+      deviceName = connection.getRemoteDeviceName(event.deviceId);
+    } catch (error) {
+      const businessError = error as BusinessError;
+      console.info(`读取蓝牙设备名称失败: ${businessError.message}`);
+    }
+    this.callbacks.onBluetoothConnected(event.deviceId, deviceName);
   }
 
   private markLost(deviceId: string, reason: string): void {

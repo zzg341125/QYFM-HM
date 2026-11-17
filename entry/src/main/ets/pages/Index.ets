@@ -99,6 +99,24 @@ struct Index {
     this.diagnostics = snapshot.diagnostics;
     this.sleepTimerMinutes = snapshot.sleepTimerMinutes;
     this.sleepTimerEndAt = snapshot.sleepTimerEndAt;
+    if (JSON.stringify(this.settings.bluetoothBindings) !==
+      JSON.stringify(snapshot.bluetoothBindings)) {
+      const settings = copySettings(this.settings);
+      settings.bluetoothBindings = snapshot.bluetoothBindings.map(
+        (binding: BluetoothBinding): BluetoothBinding => {
+          return {
+            deviceId: binding.deviceId,
+            deviceName: binding.deviceName,
+            autoPlay: binding.autoPlay,
+            lastConnectedAt: binding.lastConnectedAt
+          };
+        }
+      );
+      this.settings = settings;
+      this.repository.saveSettings(settings).catch((error: BusinessError) => {
+        console.error(`保存蓝牙绑定失败: ${error.message}`);
+      });
+    }
   };
 
   aboutToAppear(): void {

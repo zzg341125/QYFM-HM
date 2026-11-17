@@ -7,6 +7,7 @@ import {
   audioInterruptAction,
   sessionPlaybackMode,
   shouldAutoPlayOnBluetoothConnect,
+  shouldStartBoundBluetoothPlayback,
   shouldStopForBluetoothDisconnect,
   shouldResumeStoppedBluetooth,
   shouldResumeAfterForeground,
@@ -97,6 +98,14 @@ test('starts the remembered station on Bluetooth connect only when playback is i
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, true, false, true), false);
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, true, true), false);
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, false, false), false);
+});
+
+test('starts playback indefinitely for a Bluetooth binding with auto-play enabled', () => {
+  assert.equal(shouldStartBoundBluetoothPlayback(true, false, false, true), true);
+  assert.equal(shouldStartBoundBluetoothPlayback(false, false, false, true), false);
+  assert.equal(shouldStartBoundBluetoothPlayback(true, true, false, true), false);
+  assert.equal(shouldStartBoundBluetoothPlayback(true, false, true, true), false);
+  assert.equal(shouldStartBoundBluetoothPlayback(true, false, false, false), false);
 });
 
 test('allows only one playback recovery transition at a time', async () => {

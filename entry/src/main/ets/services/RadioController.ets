@@ -19,6 +19,7 @@ import {
   LivePlaybackTuning,
   sessionPlaybackMode,
   shouldAutoPlayOnBluetoothConnect,
+  shouldStartBoundBluetoothPlayback,
   shouldStopForBluetoothDisconnect,
   shouldResumeStoppedBluetooth,
   shouldResumeAfterForeground,
@@ -29,6 +30,11 @@ import { safeSessionArtwork } from '../utils/SessionArtwork';
 import { buildDecoderAttemptOrder, DecoderEngine } from '../utils/DecoderSelection';
 import { isHlsPlaylistUrl } from '../utils/HlsPlaylist';
 import { sleepTimerAfterStationSwitch } from '../utils/TimeSettings';
+import {
+  BluetoothBinding,
+  findBluetoothBinding,
+  rememberBluetoothBinding
+} from '../utils/BluetoothBindings';
 
 export interface RadioSnapshot {
   currentStation: Station | undefined;
@@ -39,6 +45,7 @@ export interface RadioSnapshot {
   diagnostics: string;
   sleepTimerMinutes: number;
   sleepTimerEndAt: number;
+  bluetoothBindings: BluetoothBinding[];
 }
 
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
@@ -101,8 +108,8 @@ export class RadioController {
       onBluetoothLost: (deviceId: string): void => {
         this.handleBluetoothLost(deviceId);
       },
-      onBluetoothRestored: (deviceId: string): void => {
-        this.handleBluetoothRestored(deviceId);
+      onBluetoothConnected: (deviceId: string, deviceName: string): void => {
+        this.handleBluetoothConnected(deviceId, deviceName);
       },
       onWindowExpired: (deviceId: string): void => {
         this.handleResumeWindowExpired(deviceId);
@@ -172,7 +179,17 @@ export class RadioController {
       statusText: this.statusText,
       diagnostics: this.diagnostics,
       sleepTimerMinutes: this.sleepTimerMinutes,
-      sleepTimerEndAt: this.sleepTimerEndAt
+      sleepTimerEndAt: this.sleepTimerEndAt,
+      bluetoothBindings: this.settings.bluetoothBindings.map(
+        (binding: BluetoothBinding): BluetoothBinding => {
+          return {
+            deviceId: binding.deviceId,
+            deviceName: binding.deviceName,
+            autoPlay: binding.autoPlay,
+            lastConnectedAt: binding.lastConnectedAt
+          };
+        }
+      )
     };
   }
 
@@ -1139,7 +1156,33 @@ export class RadioController {
     this.notify();
   }
 
-  private async handleBluetoothRestored(deviceId: string): Promise<void> {
+  private async handleBluetoothConnected(deviceId: string, deviceName: string): Promise<void> {
+    const existingBinding = findBluetoothBinding(this.settings.bluetoothBindings, deviceId);
+    this.settings.bluetoothBindings = rememberBluetoothBinding(
+      this.settings.bluetoothBindings,
+      deviceId,
+      deviceName.length > 0 ? deviceName : deviceId,
+      Date.now()
+    );
+    const binding = findBluetoothBinding(this.settings.bluetoothBindings, deviceId);
+    if (existingBinding === undefined && this.settings.autoPlayOnBluetoothConnect &&
+      binding !== undefined) {
+      binding.autoPlay = true;
+    }
+    this.notify();
+    const activeBinding = findBluetoothBinding(this.settings.bluetoothBindings, deviceId);
+    const boundStation = this.currentStation ?? this.defaultStation;
+    if (activeBinding !== undefined && shouldStartBoundBluetoothPlayback(
+      activeBinding.autoPlay,
+      this.isPlaying,
+      this.buffering,
+      boundStation !== undefined
+    ) && boundStation !== undefined) {
+      this.statusText = `蓝牙设备 ${activeBinding.deviceName} 已连接，自动开始播放`;
+      this.notify();
+      await this.playStation(boundStation);
+      return;
+    }
     const withinResumeWindow = this.stoppedForBluetoothAt > 0 &&
       Date.now() - this.stoppedForBluetoothAt <= this.settings.resumeWindowMinutes * 60 * 1000;
     if (shouldResumeStoppedBluetooth(
@@ -1158,6 +1201,9 @@ export class RadioController {
     }
     if (this.waitingForBluetooth && this.settings.autoResume && this.currentStation !== undefined) {
       await this.resume(`蓝牙设备 ${deviceId} 已重连，自动续播`);
+      return;
+    }
+    if (activeBinding !== undefined) {
       return;
     }
     const station = this.currentStation ?? this.defaultStation;
