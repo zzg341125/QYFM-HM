@@ -2053,7 +2053,7 @@ struct Index {
         ListItem() {
           this.SettingsActionRow('☁', '在线备份 (WebDAV)', 'ZIP 版本备份，可选择任意云端版本恢复。', 'webdav')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.40 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.41 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

@@ -28,7 +28,7 @@ test('stores the cloud version list as text instead of JSON', () => {
       fileName: 'qyfm-backup-20261114-010203-004.zip',
       exportedAt: '2026-11-14T01:02:03.004Z',
       stationCount: 35,
-      appVersion: '1.0.40'
+      appVersion: '1.0.41'
     }
   ];
   const text = buildWebDavBackupIndex(entries);

@@ -1,0 +1,143 @@
+# Bluetooth Background Playback Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add persistent three-device Bluetooth profiles, device-specific auto-play, call pause/resume, and remove AVSession media cards while retaining HarmonyOS background playback.
+
+**Architecture:** Keep playback and Bluetooth monitoring in the existing `RadioController`. Add a pure Bluetooth-binding model for persistence and matching, extend `BluetoothResumeManager` to report connected device names, and remove AVSession publishing while retaining the existing continuous audio task.
+
+**Tech Stack:** HarmonyOS NEXT, ArkTS/ArkUI, `@kit.ConnectivityKit`, `@kit.AudioKit`, `@kit.BackgroundTasksKit`, Hvigor, Node test runner.
+
+**Spec:** `docs/superpowers/specs/2026-11-17-bluetooth-background-playback-design.md`
+
+## Global Constraints
+
+- Store at most 3 Bluetooth devices.
+- Device auto-play ignores the resume-window duration.
+- No AVSession media card or lock-screen playback card.
+- Keep the system-required background continuous-task notification.
+- A normally installed app cannot revive after force-stop, system kill, or first install without OS auto-start permission.
+- Keep existing user data and backup compatibility.
+- Do not add enterprise/system/root-only permissions.
+
+## Review Focus
+
+- Reconnecting an already stored device must preserve its `autoPlay` choice.
+- Adding a fourth device must remove only the least recently connected record.
+- A non-auto-play device must not start playback merely because it reconnects.
+- User-manual pause must not be overridden by call-end resume.
+- Remove all AVSession calls, including deferred metadata/session preparation.
+
+---
+
+### Task 1: Bluetooth Binding Model
+
+**Files:**
+- Create: `entry/src/main/ets/utils/BluetoothBindings.ts`
+- Test: `tests/bluetooth-bindings.test.ts`
+
+**Interfaces:**
+- Produces: `BluetoothBinding { deviceId: string; deviceName: string; autoPlay: boolean; lastConnectedAt: number }`
+- Produces: `rememberBluetoothBinding(bindings: BluetoothBinding[], deviceId: string, deviceName: string, now: number): BluetoothBinding[]`
+- Produces: `findBluetoothBinding(bindings: BluetoothBinding[], deviceId: string): BluetoothBinding | undefined`
+
+- [x] **Step 1: Write failing tests**
+
+Assert that a new device is added, an existing device keeps `autoPlay` while updating its name/time, and a fourth device evicts the oldest `lastConnectedAt`.
+
+- [x] **Step 2: Run `node --test tests\bluetooth-bindings.test.ts` and verify the module is missing**
+
+- [x] **Step 3: Implement the three pure functions with a strict 3-record limit and newest-first ordering**
+
+- [x] **Step 4: Re-run the focused test and verify all assertions pass**
+
+- [x] **Step 5: Commit the model and test**
+
+### Task 2: Persist Bluetooth Bindings
+
+**Files:**
+- Modify: `entry/src/main/ets/models/Station.ets`
+- Modify: `entry/src/main/ets/data/StationRepository.ets`
+- Modify: `entry/src/main/ets/utils/QyfmBackupArchive.ts`
+- Modify: `tests/qyfm-backup-archive.test.ts`
+
+**Interfaces:**
+- Consumes: `BluetoothBinding` from Task 1.
+- Produces: `AppSettings.bluetoothBindings: BluetoothBinding[]`.
+- Produces: settings backup/restore support without storing WebDAV passwords.
+
+**Steps:**
+- [x] **Step 1: Add failing tests for default/migrated empty bindings and ZIP round-trip of three bindings and their toggles.**
+- [x] **Step 2: Run the focused tests and verify the new property is absent.**
+- [x] **Step 3: Add `bluetoothBindings` to `AppSettings`, `PortableSettings`, defaults, copies, old-settings migration, and `settings.properties` serialization/parsing.**
+- [x] **Step 4: Run the focused tests and verify pass.**
+- [x] **Step 5: Commit settings persistence.**
+
+### Task 3: Per-Device Bluetooth Auto-Play
+
+**Files:**
+- Modify: `entry/src/main/ets/services/BluetoothResumeManager.ets`
+- Modify: `entry/src/main/ets/services/RadioController.ets`
+- Modify: `entry/src/main/ets/utils/PlaybackRecovery.ts`
+- Modify: `tests/playback-recovery.test.ts`
+
+**Interfaces:**
+- Consumes: `rememberBluetoothBinding`, `findBluetoothBinding`.
+- Changes callback: `onBluetoothConnected(deviceId: string, deviceName: string): void`.
+- Produces: `shouldStartBoundBluetoothPlayback(autoPlay: boolean, isPlaying: boolean, buffering: boolean, hasStation: boolean): boolean`.
+
+**Steps:**
+- [x] **Step 1: Add a failing test proving a matched `autoPlay=true` device starts after any elapsed time, while `autoPlay=false` does not.**
+- [x] **Step 2: Run the focused test and verify it fails.**
+- [x] **Step 3: Read A2DP device names with `connection.getRemoteDeviceName`, update bindings on every connection, and start playback before legacy resume-window logic.**
+- [x] **Step 4: Expose changed bindings through `RadioSnapshot`; persist them from `Index` without modifying unrelated settings.**
+- [x] **Step 5: Run focused tests and commit.**
+
+### Task 4: Remove AVSession Playback Cards
+
+**Files:**
+- Modify: `entry/src/main/ets/services/RadioController.ets`
+- Modify: `entry/src/main/ets/utils/PlaybackRecovery.ts`
+- Modify: `tests/playback-recovery.test.ts`
+
+**Interfaces:**
+- Removes: AVSession creation, listeners, metadata publishing, activation/deactivation, and deferred session preparation.
+- Preserves: continuous audio background task and AudioInterrupt handling.
+
+**Steps:**
+- [x] **Step 1: Replace the old session-mode test with a policy test asserting no media card should be published in playing or paused states.**
+- [x] **Step 2: Run and verify failure.**
+- [x] **Step 3: Remove all AVSession imports, fields, methods, calls, and related branches.**
+- [x] **Step 4: Run tests and ArkTS compile; verify no AVSession references remain and the build succeeds.**
+- [x] **Step 5: Commit AVSession removal.**
+
+### Task 5: Bluetooth Settings UI and Auto-Start Diagnostics
+
+**Files:**
+- Modify: `entry/src/main/ets/pages/Index.ets`
+- Modify: `entry/src/main/ets/services/RadioController.ets`
+
+**Interfaces:**
+- Consumes: `settings.bluetoothBindings`.
+- Produces: three visible slots, each showing name/ID and an independent auto-play toggle.
+- Produces: system auto-start support/status text using `autoStartupManager`.
+
+**Steps:**
+- [x] **Step 1: Add the UI and event handler for toggling one device’s `autoPlay`.**
+- [x] **Step 2: Save settings and call `radio.applySettings` immediately.**
+- [x] **Step 3: Show up to three remembered devices, with empty slots when fewer exist.**
+- [x] **Step 4: Add auto-start support/status diagnostics and manual system-setting guidance.**
+- [x] **Step 5: Build and device-check the settings page.**
+- [x] **Step 6: Commit UI work.**
+
+### Task 6: Device Verification and Release
+
+**Files:**
+- Version files for `1.0.41`.
+
+**Steps:**
+- [ ] **Step 1: Run the full Node test suite.**
+- [ ] **Step 2: Build signed HAP and APP in `F:\codex\qyfm-harmony`.**
+- [ ] **Step 3: Install on `5XM0226114020541` and verify version `1.0.41 / 1000041`.**
+- [ ] **Step 4: Verify background playback without AVSession card, audio-interrupt pause/resume, and Bluetooth binding persistence.**
+- [ ] **Step 5: Commit, tag, push, and publish GitHub release assets.**

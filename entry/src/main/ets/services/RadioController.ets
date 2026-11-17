@@ -47,7 +47,7 @@ export interface RadioSnapshot {
 
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.40 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.41 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
