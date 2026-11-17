@@ -32,7 +32,6 @@ export class BackgroundTaskService {
       backgroundTaskManager.BackgroundTaskSubmode.SUBMODE_NORMAL_NOTIFICATION
     ];
     request.wantAgent = wantAgentObj;
-    request.combinedTaskNotification = true;
     try {
       const result = await backgroundTaskManager.startBackgroundRunning(context, request);
       this.continuousTaskId = result.continuousTaskId ?? -1;

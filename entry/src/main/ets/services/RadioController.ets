@@ -263,7 +263,7 @@ export class RadioController {
     }
     this.statusText = migratedStation.name;
     this.notify();
-    this.prepareSessionInBackground();
+    this.prepareSessionInBackground(migratedStation);
     this.prefetchOfficialStation(migratedStation, requestId);
     this.backgroundTasks.start(context).catch((error: BusinessError) => {
       console.error(`启动播放长时任务失败，不影响前台播放: ${error.message ?? '未知错误'}`);
@@ -1066,8 +1066,11 @@ export class RadioController {
     this.notify();
   }
 
-  private prepareSessionInBackground(): void {
+  private prepareSessionInBackground(station: Station): void {
     this.ensureSession()
+      .then((): Promise<void> => {
+        return this.updateSessionMetadata(station);
+      })
       .then((): Promise<void> => {
         return this.updateSessionPlaybackState(this.isPlaying);
       })
@@ -1093,6 +1096,17 @@ export class RadioController {
     });
     await session.activate();
     this.sessionActive = true;
+  }
+
+  private async updateSessionMetadata(station: Station): Promise<void> {
+    if (this.session === undefined) {
+      return;
+    }
+    await this.session.setAVMetadata({
+      assetId: station.id,
+      title: station.name,
+      artist: 'QYFM HM'
+    });
   }
 
   private async updateSessionPlaybackState(isPlaying: boolean): Promise<void> {
