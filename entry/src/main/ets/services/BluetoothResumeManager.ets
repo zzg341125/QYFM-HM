@@ -63,6 +63,10 @@ export class BluetoothResumeManager {
       this.routingManager.on('preferOutputDeviceChangeForRendererInfo', rendererInfo, this.routeListener);
       this.started = true;
       this.callbacks.onDiagnostics('原生 A2DP 与音频路由监听已启动');
+      const connectedDevices = this.profile.getConnectedDevices();
+      connectedDevices.forEach((deviceId: string): void => {
+        this.reportConnectedDevice(deviceId);
+      });
     } catch (error) {
       const businessError = error as BusinessError;
       this.callbacks.onDiagnostics(`蓝牙监听启动失败: ${businessError.code}`);
@@ -141,14 +145,18 @@ export class BluetoothResumeManager {
       this.clearExpiryTimer();
     }
     this.lastActiveDeviceId = event.deviceId;
+    this.reportConnectedDevice(event.deviceId);
+  }
+
+  private reportConnectedDevice(deviceId: string): void {
     let deviceName = '';
     try {
-      deviceName = connection.getRemoteDeviceName(event.deviceId);
+      deviceName = connection.getRemoteDeviceName(deviceId);
     } catch (error) {
       const businessError = error as BusinessError;
       console.info(`读取蓝牙设备名称失败: ${businessError.message}`);
     }
-    this.callbacks.onBluetoothConnected(event.deviceId, deviceName);
+    this.callbacks.onBluetoothConnected(deviceId, deviceName);
   }
 
   private markLost(deviceId: string, reason: string): void {

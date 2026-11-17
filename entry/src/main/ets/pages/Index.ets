@@ -1,4 +1,4 @@
-import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+import { abilityAccessCtrl, autoStartupManager, common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import {
   AppSettings,
@@ -44,6 +44,7 @@ struct Index {
   @State waitingForBluetooth: boolean = false;
   @State playbackStatus: string = '选择电台后开始播放';
   @State diagnostics: string = '蓝牙监听尚未启动';
+  @State autoStartupStatus: string = '正在检查系统自动启动状态';
   @State sleepTimerMinutes: number = 0;
   @State sleepTimerEndAt: number = 0;
   @State showSleepPanel: boolean = false;
@@ -135,6 +136,7 @@ struct Index {
       this.stations = await this.repository.loadStations();
       this.settings = await this.repository.loadSettings();
       await this.requestBluetoothPermission(context);
+      await this.refreshAutoStartupStatus();
       await this.radio.init(context, this.settings);
       this.radio.subscribe(this.snapshotListener);
       this.palette = findTheme(this.settings.themeId);
@@ -166,6 +168,22 @@ struct Index {
     } catch (error) {
       const businessError = error as BusinessError;
       this.diagnostics = `蓝牙权限申请返回：${businessError.code}`;
+    }
+  }
+
+  private async refreshAutoStartupStatus(): Promise<void> {
+    try {
+      if (!autoStartupManager.isAutoStartupSupported()) {
+        this.autoStartupStatus = '当前设备不支持应用自动启动';
+        return;
+      }
+      const enabled = await autoStartupManager.getAutoStartupStatusForSelf();
+      this.autoStartupStatus = enabled
+        ? '系统自动启动已开启'
+        : '系统未开启自动启动；请在系统设置中允许 QYFM 自启动';
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.autoStartupStatus = `自动启动状态读取失败：${businessError.code}`;
     }
   }
 
@@ -748,6 +766,24 @@ struct Index {
     this.settingsStatus = `蓝牙续播窗口已设为 ${this.settings.resumeWindowMinutes} 分钟`;
   }
 
+  private async updateBluetoothBindingAutoPlay(deviceId: string, value: boolean): Promise<void> {
+    const settings = copySettings(this.settings);
+    settings.bluetoothBindings = settings.bluetoothBindings.map(
+      (binding: BluetoothBinding): BluetoothBinding => {
+        return {
+          deviceId: binding.deviceId,
+          deviceName: binding.deviceName,
+          autoPlay: binding.deviceId === deviceId ? value : binding.autoPlay,
+          lastConnectedAt: binding.lastConnectedAt
+        };
+      }
+    );
+    this.settings = settings;
+    await this.radio.applySettings(settings);
+    await this.repository.saveSettings(settings);
+    this.settingsStatus = value ? '该蓝牙设备已设为连接后自动播放' : '该蓝牙设备已设为连接后不自动播放';
+  }
+
   private updateDynamicColor(value: boolean): void {
     const settings = copySettings(this.settings);
     settings.dynamicColor = value;
@@ -1295,6 +1331,10 @@ struct Index {
           this.settingsStatus = '蓝牙设备识别权限已请求';
         }
         break;
+      case 'autoStartup':
+        await this.refreshAutoStartupStatus();
+        this.settingsStatus = this.autoStartupStatus;
+        break;
       default:
         break;
     }
@@ -1655,6 +1695,48 @@ struct Index {
   }
 
   @Builder
+  BluetoothBindingRow(binding: BluetoothBinding | undefined, slot: number) {
+    Row({ space: 12 }) {
+      Text(`${slot + 1}`)
+        .width(32)
+        .height(32)
+        .textAlign(TextAlign.Center)
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryColor())
+        .backgroundColor(this.palette.surfaceVariant)
+        .borderRadius(16)
+      Column({ space: 3 }) {
+        Text(binding === undefined ? `蓝牙设备 ${slot + 1}` : binding.deviceName)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(binding === undefined ? this.palette.textSecondary : this.palette.textPrimary)
+        Text(binding === undefined ? '连接一次蓝牙音频设备后自动记录' : binding.deviceId)
+          .fontSize(11)
+          .fontColor(this.palette.textSecondary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      if (binding !== undefined) {
+        Column({ space: 3 }) {
+          Text('连接后自动播放')
+            .fontSize(11)
+            .fontColor(this.palette.textSecondary)
+          Toggle({ type: ToggleType.Switch, isOn: binding.autoPlay })
+            .selectedColor(this.primaryColor())
+            .onChange((value: boolean) => {
+              this.updateBluetoothBindingAutoPlay(binding.deviceId, value);
+            })
+        }
+      }
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 10, bottom: 10 })
+  }
+
+  @Builder
   SettingsSectionTitle(title: string) {
     Text(title)
       .width('100%')
@@ -1899,6 +1981,22 @@ struct Index {
         ListItem() {
           this.SettingsSectionTitle('蓝牙与耳机')
         }
+        ListItem() {
+          this.SettingsActionRow('⌁', '系统自动启动', this.autoStartupStatus, 'autoStartup')
+        }
+        ListItem() {
+          Text('已绑定蓝牙设备（最多 3 个）')
+            .width('100%')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.palette.textSecondary)
+            .padding({ left: 20, right: 20, top: 10, bottom: 2 })
+        }
+        ForEach([0, 1, 2], (slot: number) => {
+          ListItem() {
+            this.BluetoothBindingRow(this.settings.bluetoothBindings[slot], slot)
+          }
+        }, (slot: number) => slot.toString())
         ListItem() {
           this.SettingsActionRow('⌁', '蓝牙设备识别权限', this.diagnostics, 'bluetoothPermission')
         }
