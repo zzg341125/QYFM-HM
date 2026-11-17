@@ -17,6 +17,9 @@ export function rememberBluetoothBinding(
   }
   const existing = bindings.find((binding: BluetoothBinding): boolean =>
     binding.deviceId === normalizedId);
+  if (existing === undefined && bindings.length >= 3) {
+    return bindings.slice(0, 3);
+  }
   const next: BluetoothBinding = {
     deviceId: normalizedId,
     deviceName: deviceName.trim(),
@@ -36,4 +39,29 @@ export function findBluetoothBinding(
   deviceId: string
 ): BluetoothBinding | undefined {
   return bindings.find((binding: BluetoothBinding): boolean => binding.deviceId === deviceId);
+}
+
+export function forgetBluetoothBinding(
+  bindings: BluetoothBinding[],
+  deviceId: string
+): BluetoothBinding[] {
+  const normalizedId = deviceId.trim();
+  return bindings.filter((binding: BluetoothBinding): boolean =>
+    binding.deviceId !== normalizedId);
+}
+
+export function replaceBluetoothBinding(
+  bindings: BluetoothBinding[],
+  deviceIdToForget: string,
+  replacement: BluetoothBinding | undefined
+): BluetoothBinding[] {
+  const remaining = forgetBluetoothBinding(bindings, deviceIdToForget);
+  return replacement === undefined
+    ? remaining
+    : rememberBluetoothBinding(
+      remaining,
+      replacement.deviceId,
+      replacement.deviceName,
+      replacement.lastConnectedAt
+    );
 }

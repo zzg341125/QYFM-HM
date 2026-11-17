@@ -43,11 +43,12 @@ export interface RadioSnapshot {
   sleepTimerMinutes: number;
   sleepTimerEndAt: number;
   bluetoothBindings: BluetoothBinding[];
+  pendingBluetoothBinding: BluetoothBinding | undefined;
 }
 
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.41 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.42 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -91,6 +92,7 @@ export class RadioController {
   private audioInterrupted: boolean = false;
   private stoppedForBluetoothDeviceId: string = '';
   private stoppedForBluetoothAt: number = 0;
+  private pendingBluetoothBinding: BluetoothBinding | undefined = undefined;
   private playbackRequestedAt: number = 0;
   private tuning: LivePlaybackTuning = buildLivePlaybackTuning(true);
   private backgroundTasks: BackgroundTaskService = new BackgroundTaskService();
@@ -183,8 +185,20 @@ export class RadioController {
             lastConnectedAt: binding.lastConnectedAt
           };
         }
-      )
+      ),
+      pendingBluetoothBinding: this.pendingBluetoothBinding === undefined
+        ? undefined
+        : {
+          deviceId: this.pendingBluetoothBinding.deviceId,
+          deviceName: this.pendingBluetoothBinding.deviceName,
+          autoPlay: this.pendingBluetoothBinding.autoPlay,
+          lastConnectedAt: this.pendingBluetoothBinding.lastConnectedAt
+        }
     };
+  }
+
+  clearPendingBluetoothBinding(): void {
+    this.pendingBluetoothBinding = undefined;
   }
 
   async playStation(station: Station): Promise<void> {
@@ -1053,14 +1067,35 @@ export class RadioController {
   }
 
   private async handleBluetoothConnected(deviceId: string, deviceName: string): Promise<void> {
+    const normalizedId = deviceId.trim();
+    if (normalizedId.length === 0) {
+      return;
+    }
+    const now = Date.now();
+    const effectiveName = deviceName.trim().length > 0 ? deviceName.trim() : normalizedId;
+    const existingBinding = findBluetoothBinding(this.settings.bluetoothBindings, normalizedId);
+    if (existingBinding === undefined && this.settings.bluetoothBindings.length >= 3) {
+      this.pendingBluetoothBinding = {
+        deviceId: normalizedId,
+        deviceName: effectiveName,
+        autoPlay: false,
+        lastConnectedAt: now
+      };
+      this.statusText = `检测到新蓝牙设备 ${effectiveName}；请在设置中删除一个绑定后重新绑定`;
+      this.notify();
+      return;
+    }
     this.settings.bluetoothBindings = rememberBluetoothBinding(
       this.settings.bluetoothBindings,
-      deviceId,
-      deviceName.length > 0 ? deviceName : deviceId,
-      Date.now()
+      normalizedId,
+      effectiveName,
+      now
     );
+    if (existingBinding === undefined) {
+      this.pendingBluetoothBinding = undefined;
+    }
     this.notify();
-    const activeBinding = findBluetoothBinding(this.settings.bluetoothBindings, deviceId);
+    const activeBinding = findBluetoothBinding(this.settings.bluetoothBindings, normalizedId);
     const boundStation = this.currentStation ?? this.defaultStation;
     if (activeBinding !== undefined && shouldStartBoundBluetoothPlayback(
       this.settings.autoPlayOnBluetoothConnect,
@@ -1078,20 +1113,20 @@ export class RadioController {
       Date.now() - this.stoppedForBluetoothAt <= this.settings.resumeWindowMinutes * 60 * 1000;
     if (shouldResumeStoppedBluetooth(
       this.settings.autoResume,
-      deviceId === this.stoppedForBluetoothDeviceId,
+      normalizedId === this.stoppedForBluetoothDeviceId,
       withinResumeWindow,
       this.currentStation !== undefined
     )) {
       const station = this.currentStation;
       if (station !== undefined) {
         await this.playStation(station);
-        this.statusText = `蓝牙设备 ${deviceId} 已重连，自动续播`;
+        this.statusText = `蓝牙设备 ${normalizedId} 已重连，自动续播`;
         this.notify();
         return;
       }
     }
     if (this.waitingForBluetooth && this.settings.autoResume && this.currentStation !== undefined) {
-      await this.resume(`蓝牙设备 ${deviceId} 已重连，自动续播`);
+      await this.resume(`蓝牙设备 ${normalizedId} 已重连，自动续播`);
       return;
     }
     if (activeBinding !== undefined) {
@@ -1106,7 +1141,7 @@ export class RadioController {
     ) || station === undefined) {
       return;
     }
-    this.statusText = `蓝牙设备 ${deviceId} 已连接，自动开始播放`;
+    this.statusText = `蓝牙设备 ${normalizedId} 已连接，自动开始播放`;
     this.notify();
     await this.playStation(station);
   }

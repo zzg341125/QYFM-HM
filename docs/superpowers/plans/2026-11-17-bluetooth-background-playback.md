@@ -24,7 +24,7 @@
 
 - Reconnecting an already stored device must preserve its `autoPlay` choice.
 - A new device defaults to `autoPlay=false`; the global switch only gates whether enabled device profiles may start playback.
-- Adding a fourth device must remove only the least recently connected record.
+- Adding a fourth device must not evict a saved record; deleting a chosen record immediately replaces it with the pending device.
 - A non-auto-play device must not start playback merely because it reconnects.
 - User-manual pause must not be overridden by call-end resume.
 - Remove all AVSession calls, including deferred metadata/session preparation.
@@ -41,14 +41,15 @@
 - Produces: `BluetoothBinding { deviceId: string; deviceName: string; autoPlay: boolean; lastConnectedAt: number }`
 - Produces: `rememberBluetoothBinding(bindings: BluetoothBinding[], deviceId: string, deviceName: string, now: number): BluetoothBinding[]`
 - Produces: `findBluetoothBinding(bindings: BluetoothBinding[], deviceId: string): BluetoothBinding | undefined`
+- Produces: `replaceBluetoothBinding(bindings: BluetoothBinding[], deviceIdToForget: string, replacement: BluetoothBinding | undefined): BluetoothBinding[]`
 
 - [x] **Step 1: Write failing tests**
 
-Assert that a new device is added, an existing device keeps `autoPlay` while updating its name/time, and a fourth device evicts the oldest `lastConnectedAt`.
+Assert that a new device is added, an existing device keeps `autoPlay` while updating its name/time, a fourth device does not evict saved records, and deleting a chosen record replaces it with the pending device.
 
 - [x] **Step 2: Run `node --test tests\bluetooth-bindings.test.ts` and verify the module is missing**
 
-- [x] **Step 3: Implement the three pure functions with a strict 3-record limit and newest-first ordering**
+- [x] **Step 3: Implement the pure functions with a strict 3-record limit, explicit deletion and newest-first ordering**
 
 - [x] **Step 4: Re-run the focused test and verify all assertions pass**
 
@@ -134,12 +135,12 @@ Assert that a new device is added, an existing device keeps `autoPlay` while upd
 ### Task 6: Device Verification and Release
 
 **Files:**
-- Version files for `1.0.41`.
+- Version files for `1.0.42`.
 
 **Steps:**
 - [x] **Step 1: Run the full Node test suite.**
 - [x] **Step 2: Build signed HAP and APP in `F:\codex\qyfm-harmony`.**
-- [x] **Step 3: Install on `5XM0226114020541` and verify version `1.0.41 / 1000041`.**
+- [x] **Step 3: Install on `5XM0226114020541` and verify version `1.0.42 / 1000042`.**
 - [x] **Step 4: Verify background playback without an AVSession card and confirm Bluetooth binding toggle persistence on the connected device.**
 - [x] **Step 5: Verify call-interrupt pause/resume policy with unit tests and code review.**
 - [ ] **Step 6: Verify a real incoming call on the device; this requires an external call and is not automatable from the current environment.**

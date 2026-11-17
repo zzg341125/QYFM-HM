@@ -24,7 +24,10 @@ import { formatSleepTimerEnd, normalizeResumeWindowMinutes } from '../utils/Time
 import { moveListItem } from '../utils/ListOrdering';
 import { BackupArchiveService, QyfmBackupArchivePackage } from '../services/BackupArchiveService';
 import { isQyfmBackupPlaylist, parseQyfmBackupArchive } from '../utils/QyfmBackupArchive';
-import { BluetoothBinding } from '../utils/BluetoothBindings';
+import {
+  BluetoothBinding,
+  replaceBluetoothBinding
+} from '../utils/BluetoothBindings';
 import {
   StationSwipeAction,
   stationRowTapAction,
@@ -45,6 +48,7 @@ struct Index {
   @State playbackStatus: string = '选择电台后开始播放';
   @State diagnostics: string = '蓝牙监听尚未启动';
   @State autoStartupStatus: string = '正在检查系统自动启动状态';
+  @State pendingBluetoothBinding: BluetoothBinding | undefined = undefined;
   @State sleepTimerMinutes: number = 0;
   @State sleepTimerEndAt: number = 0;
   @State showSleepPanel: boolean = false;
@@ -100,6 +104,7 @@ struct Index {
     this.diagnostics = snapshot.diagnostics;
     this.sleepTimerMinutes = snapshot.sleepTimerMinutes;
     this.sleepTimerEndAt = snapshot.sleepTimerEndAt;
+    this.pendingBluetoothBinding = snapshot.pendingBluetoothBinding;
     if (JSON.stringify(this.settings.bluetoothBindings) !==
       JSON.stringify(snapshot.bluetoothBindings)) {
       const settings = copySettings(this.settings);
@@ -785,6 +790,22 @@ struct Index {
         ? '该蓝牙设备已设为连接后自动播放'
         : '该设备已勾选；打开下方“蓝牙自动播放总开关”后生效')
       : '该蓝牙设备已设为连接后不自动播放';
+  }
+
+  private deleteBluetoothBinding(deviceId: string): void {
+    const settings = copySettings(this.settings);
+    const pending = this.pendingBluetoothBinding;
+    const bindings = replaceBluetoothBinding(settings.bluetoothBindings, deviceId, pending);
+    if (pending !== undefined) {
+      this.radio.clearPendingBluetoothBinding();
+      this.pendingBluetoothBinding = undefined;
+    }
+    settings.bluetoothBindings = bindings;
+    this.settings = settings;
+    this.persistSettings();
+    this.settingsStatus = pending === undefined
+      ? '已删除该蓝牙设备记录；下次连接时会重新绑定'
+      : `已用 ${pending.deviceName} 替换该绑定，可设置是否自动连接播放`;
   }
 
   private updateDynamicColor(value: boolean): void {
@@ -1723,7 +1744,7 @@ struct Index {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       if (binding !== undefined) {
-        Column({ space: 4 }) {
+        Column({ space: 6 }) {
           Text('连接后自动播放')
             .fontSize(11)
             .fontColor(this.palette.textSecondary)
@@ -1738,17 +1759,22 @@ struct Index {
           .justifyContent(FlexAlign.Center)
           .borderRadius(16)
           .backgroundColor(binding.autoPlay ? this.primaryColor() : this.palette.surfaceVariant)
+          .id(`bluetooth-auto-play-${slot}`)
+          .onClick(() => {
+            this.updateBluetoothBindingAutoPlay(binding.deviceId, !binding.autoPlay);
+          })
+          Text('删除记录')
+            .fontSize(11)
+            .fontColor('#FF8A80')
+            .id(`bluetooth-delete-${slot}`)
+            .onClick(() => {
+              this.deleteBluetoothBinding(binding.deviceId);
+            })
         }
       }
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 10, bottom: 10 })
-    .id(`bluetooth-binding-${slot}`)
-    .onClick(() => {
-      if (binding !== undefined) {
-        this.updateBluetoothBindingAutoPlay(binding.deviceId, !binding.autoPlay);
-      }
-    })
   }
 
   @Builder
@@ -2007,6 +2033,22 @@ struct Index {
             .fontColor(this.palette.textSecondary)
             .padding({ left: 20, right: 20, top: 10, bottom: 2 })
         }
+        if (this.pendingBluetoothBinding !== undefined) {
+          ListItem() {
+            Column({ space: 4 }) {
+              Text(`待绑定：${this.pendingBluetoothBinding.deviceName}`)
+                .fontSize(15)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#FFCC80')
+              Text('已有 3 个绑定；删除下方任意一条记录后，此设备会立即补入并可设置自动连接播放。')
+                .fontSize(12)
+                .fontColor(this.palette.textSecondary)
+                .lineHeight(18)
+            }
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 10, bottom: 10 })
+          }
+        }
         ForEach([0, 1, 2], (slot: number) => {
           ListItem() {
             this.BluetoothBindingRow(this.settings.bluetoothBindings[slot], slot)
@@ -2071,7 +2113,7 @@ struct Index {
         ListItem() {
           this.SettingsActionRow('☁', '在线备份 (WebDAV)', 'ZIP 版本备份，可选择任意云端版本恢复。', 'webdav')
         }
-        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.41 · GitHub Releases', 'checkUpdate') }
+        ListItem() { this.SettingsActionRow('↻', '检查更新', '当前版本 1.0.42 · GitHub Releases', 'checkUpdate') }
         ListItem() {
           this.SettingsSwitchRow('⟳', '自动检查并下载更新', '启动后自动检查新版本，安装由系统确认。', 'autoUpdate')
         }

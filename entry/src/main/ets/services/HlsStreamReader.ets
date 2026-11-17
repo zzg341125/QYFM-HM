@@ -12,7 +12,7 @@ import {
 } from '../utils/HlsPlaylist';
 import { AudioChunkSink } from './IcecastStreamRelay';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.41 (FFmpeg HLS)';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.42 (FFmpeg HLS)';
 
 class HlsRequestHeaders {
   'User-Agent': string = USER_AGENT;
