@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add persistent three-device Bluetooth profiles, device-specific auto-play, call pause/resume, and remove AVSession media cards while retaining HarmonyOS background playback.
+**Goal:** Add persistent three-device Bluetooth profiles, device-specific auto-play, call pause/resume, and retain HarmonyOS background playback with a minimal metadata-free AVSession.
 
-**Architecture:** Keep playback and Bluetooth monitoring in the existing `RadioController`. Add a pure Bluetooth-binding model for persistence and matching, extend `BluetoothResumeManager` to report connected device names, and remove AVSession publishing while retaining the existing continuous audio task.
+**Architecture:** Keep playback and Bluetooth monitoring in the existing `RadioController`. Add a pure Bluetooth-binding model for persistence and matching, extend `BluetoothResumeManager` to report connected device names, and keep a metadata-free AVSession so background audio is not suspended.
 
 **Tech Stack:** HarmonyOS NEXT, ArkTS/ArkUI, `@kit.ConnectivityKit`, `@kit.AudioKit`, `@kit.BackgroundTasksKit`, Hvigor, Node test runner.
 
@@ -14,7 +14,7 @@
 
 - Store at most 3 Bluetooth devices.
 - Device auto-play ignores the resume-window duration.
-- No AVSession media card or lock-screen playback card.
+- Do not publish artwork or media metadata to AVSession; keep only the minimal background-playback session.
 - Keep the system-required background continuous-task notification.
 - A normally installed app cannot revive after force-stop, system kill, or first install without OS auto-start permission.
 - Keep existing user data and backup compatibility.
@@ -27,7 +27,7 @@
 - Adding a fourth device must not evict a saved record; deleting a chosen record immediately replaces it with the pending device.
 - A non-auto-play device must not start playback merely because it reconnects.
 - User-manual pause must not be overridden by call-end resume.
-- Remove all AVSession calls, including deferred metadata/session preparation.
+- Keep only the minimal AVSession creation, activation, playback-state and command handling required for background audio.
 
 ---
 
@@ -95,7 +95,7 @@ Assert that a new device is added, an existing device keeps `autoPlay` while upd
 - [x] **Step 4: Expose changed bindings through `RadioSnapshot`; persist them from `Index` without modifying unrelated settings.**
 - [x] **Step 5: Run focused tests and commit.**
 
-### Task 4: Remove AVSession Playback Cards
+### Task 4: Minimal AVSession for Background Playback
 
 **Files:**
 - Modify: `entry/src/main/ets/services/RadioController.ets`
@@ -103,15 +103,15 @@ Assert that a new device is added, an existing device keeps `autoPlay` while upd
 - Modify: `tests/playback-recovery.test.ts`
 
 **Interfaces:**
-- Removes: AVSession creation, listeners, metadata publishing, activation/deactivation, and deferred session preparation.
-- Preserves: continuous audio background task and AudioInterrupt handling.
+- Produces: an active `audio` AVSession without title or artwork metadata while playing.
+- Preserves: background playback, media commands, continuous audio background task and AudioInterrupt handling.
 
 **Steps:**
-- [x] **Step 1: Replace the old session-mode test with a policy test asserting no media card should be published in playing or paused states.**
+- [x] **Step 1: Replace the old card policy test with session activation/deactivation coverage.**
 - [x] **Step 2: Run and verify failure.**
-- [x] **Step 3: Remove all AVSession imports, fields, methods, calls, and related branches.**
-- [x] **Step 4: Run tests and ArkTS compile; verify no AVSession references remain and the build succeeds.**
-- [x] **Step 5: Commit AVSession removal.**
+- [x] **Step 3: Keep minimal session activation and playback-state updates without media metadata.**
+- [x] **Step 4: Run tests and ArkTS compile; verify background audio and lock-screen behavior on the device.**
+- [x] **Step 5: Commit the minimal-session fix.**
 
 ### Task 5: Bluetooth Settings UI and Auto-Start Diagnostics
 
@@ -135,13 +135,13 @@ Assert that a new device is added, an existing device keeps `autoPlay` while upd
 ### Task 6: Device Verification and Release
 
 **Files:**
-- Version files for `1.0.42`.
+- Version files for `1.0.43`.
 
 **Steps:**
 - [x] **Step 1: Run the full Node test suite.**
 - [x] **Step 2: Build signed HAP and APP in `F:\codex\qyfm-harmony`.**
-- [x] **Step 3: Install on `5XM0226114020541` and verify version `1.0.42 / 1000042`.**
-- [x] **Step 4: Verify background playback without an AVSession card and confirm Bluetooth binding toggle persistence on the connected device.**
+- [x] **Step 3: Install on `5XM0226114020541` and verify version `1.0.43 / 1000043`.**
+- [x] **Step 4: Verify background and lock-screen playback with the metadata-free AVSession, and confirm Bluetooth binding persistence.**
 - [x] **Step 5: Verify call-interrupt pause/resume policy with unit tests and code review.**
 - [ ] **Step 6: Verify a real incoming call on the device; this requires an external call and is not automatable from the current environment.**
 - [ ] **Step 7: Commit, tag, push, and publish GitHub release assets.**

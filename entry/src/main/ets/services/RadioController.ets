@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { media } from '@kit.MediaKit';
+import { avSession } from '@kit.AVSessionKit';
 import { audio } from '@kit.AudioKit';
 import { AppSettings, createDefaultSettings, Station, StreamLine } from '../models/Station';
 import { BackgroundTaskService } from './BackgroundTaskService';
@@ -16,6 +17,7 @@ import {
   PlaybackRecoveryGate,
   PlaybackCandidate,
   LivePlaybackTuning,
+  sessionPlaybackMode,
   shouldAutoPlayOnBluetoothConnect,
   shouldStartBoundBluetoothPlayback,
   shouldStopForBluetoothDisconnect,
@@ -48,7 +50,8 @@ export interface RadioSnapshot {
 
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.42 (AVPlayer)';
+const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.43 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -66,6 +69,8 @@ export class RadioController {
   private activeDecoderEngine: DecoderEngine | undefined = undefined;
   private decoderAttemptsTried: Set<string> = new Set<string>();
   private icyRelay: IcecastStreamRelay | undefined = undefined;
+  private session: avSession.AVSession | undefined = undefined;
+  private sessionActive: boolean = false;
   private currentStation: Station | undefined = undefined;
   private defaultStation: Station | undefined = undefined;
   private settings: AppSettings = createDefaultSettings();
@@ -258,6 +263,7 @@ export class RadioController {
     }
     this.statusText = migratedStation.name;
     this.notify();
+    this.prepareSessionInBackground();
     this.prefetchOfficialStation(migratedStation, requestId);
     this.backgroundTasks.start(context).catch((error: BusinessError) => {
       console.error(`启动播放长时任务失败，不影响前台播放: ${error.message ?? '未知错误'}`);
@@ -322,6 +328,9 @@ export class RadioController {
     this.buffering = false;
     this.waitingForBluetooth = !manual && this.settings.autoResume;
     this.statusText = reason;
+    await this.updateSessionPlaybackState(false).catch((error: BusinessError): void => {
+      console.error(`更新媒体暂停状态失败: ${error.message}`);
+    });
     this.notify();
   }
 
@@ -350,6 +359,9 @@ export class RadioController {
     this.isPlaying = false;
     this.waitingForBluetooth = false;
     this.statusText = '已停止';
+    await this.updateSessionPlaybackState(false).catch((error: BusinessError): void => {
+      console.error(`更新媒体停止状态失败: ${error.message}`);
+    });
     this.notify();
   }
 
@@ -703,6 +715,7 @@ export class RadioController {
       this.isPlaying = true;
       this.waitingForBluetooth = false;
       this.statusText = this.currentStation?.name ?? '正在播放';
+      await this.updateSessionPlaybackState(true);
       this.notify();
     } else if (state === 'paused') {
       this.isPlaying = false;
@@ -712,12 +725,14 @@ export class RadioController {
       if (!this.waitingForBluetooth) {
         this.statusText = this.audioInterrupted ? '音频暂时被其他应用占用' : '已暂停';
       }
+      await this.updateSessionPlaybackState(false);
       this.notify();
     } else if (state === 'completed' || state === 'stopped') {
       this.isPlaying = false;
       this.clearBufferHint();
       this.clearBufferStallRecovery();
       this.buffering = false;
+      await this.updateSessionPlaybackState(false);
       if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
         this.statusText = this.pausedByUser ? '播放已停止' : '等待音频恢复';
         this.notify();
@@ -749,6 +764,9 @@ export class RadioController {
       this.isPlaying = true;
       this.waitingForBluetooth = false;
       this.statusText = this.currentStation?.name ?? '正在播放';
+      this.updateSessionPlaybackState(true).catch((error: BusinessError): void => {
+        console.error(`更新 FFmpeg 媒体状态失败: ${error.message ?? '未知错误'}`);
+      });
       this.notify();
       return;
     }
@@ -759,6 +777,9 @@ export class RadioController {
       if (!this.waitingForBluetooth) {
         this.statusText = '已暂停';
       }
+      this.updateSessionPlaybackState(false).catch((error: BusinessError): void => {
+        console.error(`隐藏 FFmpeg 暂停媒体状态失败: ${error.message}`);
+      });
       this.notify();
       return;
     }
@@ -1040,8 +1061,62 @@ export class RadioController {
     this.isPlaying = false;
     this.clearWatchdog();
     await this.releaseActivePlayers(false);
+    await this.updateSessionPlaybackState(false);
     this.statusText = '音频暂时被其他应用占用，中断结束后自动续播';
     this.notify();
+  }
+
+  private prepareSessionInBackground(): void {
+    this.ensureSession()
+      .then((): Promise<void> => {
+        return this.updateSessionPlaybackState(this.isPlaying);
+      })
+      .catch((error: BusinessError) => {
+        console.error(`媒体会话初始化失败，不影响电台播放: ${error.message ?? '未知错误'}`);
+      });
+  }
+
+  private async ensureSession(): Promise<void> {
+    if (this.session !== undefined || this.context === undefined) {
+      return;
+    }
+    const session = await avSession.createAVSession(this.context, SESSION_TAG, 'audio');
+    this.session = session;
+    session.on('play', () => {
+      this.resume('从媒体控制继续播放');
+    });
+    session.on('pause', () => {
+      this.pause('从媒体控制暂停', true);
+    });
+    session.on('stop', () => {
+      this.stop();
+    });
+    await session.activate();
+    this.sessionActive = true;
+  }
+
+  private async updateSessionPlaybackState(isPlaying: boolean): Promise<void> {
+    if (this.session === undefined) {
+      return;
+    }
+    if (sessionPlaybackMode(isPlaying) === 'playing') {
+      if (!this.sessionActive) {
+        await this.session.activate();
+        this.sessionActive = true;
+      }
+      await this.session.setAVPlaybackState({
+        state: avSession.PlaybackState.PLAYBACK_STATE_PLAY
+      });
+      return;
+    }
+    if (!this.sessionActive) {
+      return;
+    }
+    await this.session.setAVPlaybackState({
+      state: avSession.PlaybackState.PLAYBACK_STATE_STOP
+    });
+    await this.session.deactivate();
+    this.sessionActive = false;
   }
 
   private async handleBluetoothLost(deviceId: string): Promise<void> {

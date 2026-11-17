@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.dragon.qyfm",
     "vendor": "dragon",
-    "versionCode": 1000042,
-    "versionName": "1.0.42",
+    "versionCode": 1000043,
+    "versionName": "1.0.43",
     "icon": "$media:icon",
     "label": "$string:app_name"
   }
