@@ -180,10 +180,8 @@ export function shouldResumeStoppedBluetooth(
   return enabled && sameDevice && insideWindow && hasStation;
 }
 
-export type SessionPlaybackMode = 'playing' | 'hidden';
-
-export function sessionPlaybackMode(isPlaying: boolean): SessionPlaybackMode {
-  return isPlaying ? 'playing' : 'hidden';
+export function shouldPublishPlaybackCard(isPlaying: boolean): boolean {
+  return false;
 }
 
 export function shouldRecoverFromBufferStall(

@@ -5,7 +5,7 @@ import {
   buildLivePlaybackTuning,
   buildPlaybackCandidates,
   audioInterruptAction,
-  sessionPlaybackMode,
+  shouldPublishPlaybackCard,
   shouldAutoPlayOnBluetoothConnect,
   shouldStartBoundBluetoothPlayback,
   shouldStopForBluetoothDisconnect,
@@ -136,9 +136,9 @@ test('allows only one playback recovery transition at a time', async () => {
   assert.equal(idleResolved, true);
 });
 
-test('hides media controls instead of publishing a paused lock-screen state', () => {
-  assert.equal(sessionPlaybackMode(true), 'playing');
-  assert.equal(sessionPlaybackMode(false), 'hidden');
+test('never publishes a media playback card while playing or paused', () => {
+  assert.equal(shouldPublishPlaybackCard(true), false);
+  assert.equal(shouldPublishPlaybackCard(false), false);
 });
 
 test('stops playback immediately when the configured Bluetooth output disconnects', () => {
