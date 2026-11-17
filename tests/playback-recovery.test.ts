@@ -100,12 +100,13 @@ test('starts the remembered station on Bluetooth connect only when playback is i
   assert.equal(shouldAutoPlayOnBluetoothConnect(true, false, false, false), false);
 });
 
-test('starts playback indefinitely for a Bluetooth binding with auto-play enabled', () => {
-  assert.equal(shouldStartBoundBluetoothPlayback(true, false, false, true), true);
-  assert.equal(shouldStartBoundBluetoothPlayback(false, false, false, true), false);
-  assert.equal(shouldStartBoundBluetoothPlayback(true, true, false, true), false);
-  assert.equal(shouldStartBoundBluetoothPlayback(true, false, true, true), false);
-  assert.equal(shouldStartBoundBluetoothPlayback(true, false, false, false), false);
+test('starts playback for an enabled Bluetooth binding only when the master switch is on', () => {
+  assert.equal(shouldStartBoundBluetoothPlayback(true, true, false, false, true), true);
+  assert.equal(shouldStartBoundBluetoothPlayback(false, true, false, false, true), false);
+  assert.equal(shouldStartBoundBluetoothPlayback(true, false, false, false, true), false);
+  assert.equal(shouldStartBoundBluetoothPlayback(true, true, true, false, true), false);
+  assert.equal(shouldStartBoundBluetoothPlayback(true, true, false, true, true), false);
+  assert.equal(shouldStartBoundBluetoothPlayback(true, true, false, false, false), false);
 });
 
 test('allows only one playback recovery transition at a time', async () => {

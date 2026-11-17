@@ -766,7 +766,7 @@ struct Index {
     this.settingsStatus = `蓝牙续播窗口已设为 ${this.settings.resumeWindowMinutes} 分钟`;
   }
 
-  private async updateBluetoothBindingAutoPlay(deviceId: string, value: boolean): Promise<void> {
+  private updateBluetoothBindingAutoPlay(deviceId: string, value: boolean): void {
     const settings = copySettings(this.settings);
     settings.bluetoothBindings = settings.bluetoothBindings.map(
       (binding: BluetoothBinding): BluetoothBinding => {
@@ -779,9 +779,12 @@ struct Index {
       }
     );
     this.settings = settings;
-    await this.radio.applySettings(settings);
-    await this.repository.saveSettings(settings);
-    this.settingsStatus = value ? '该蓝牙设备已设为连接后自动播放' : '该蓝牙设备已设为连接后不自动播放';
+    this.persistSettings();
+    this.settingsStatus = value
+      ? (this.settings.autoPlayOnBluetoothConnect
+        ? '该蓝牙设备已设为连接后自动播放'
+        : '该设备已勾选；打开下方“蓝牙自动播放总开关”后生效')
+      : '该蓝牙设备已设为连接后不自动播放';
   }
 
   private updateDynamicColor(value: boolean): void {
@@ -1720,20 +1723,32 @@ struct Index {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       if (binding !== undefined) {
-        Column({ space: 3 }) {
+        Column({ space: 4 }) {
           Text('连接后自动播放')
             .fontSize(11)
             .fontColor(this.palette.textSecondary)
-          Toggle({ type: ToggleType.Switch, isOn: binding.autoPlay })
-            .selectedColor(this.primaryColor())
-            .onChange((value: boolean) => {
-              this.updateBluetoothBindingAutoPlay(binding.deviceId, value);
-            })
+          Row() {
+            Text(binding.autoPlay ? '开' : '关')
+              .fontSize(13)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(binding.autoPlay ? this.palette.textPrimary : this.palette.textSecondary)
+          }
+          .width(72)
+          .height(32)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius(16)
+          .backgroundColor(binding.autoPlay ? this.primaryColor() : this.palette.surfaceVariant)
         }
       }
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 10, bottom: 10 })
+    .id(`bluetooth-binding-${slot}`)
+    .onClick(() => {
+      if (binding !== undefined) {
+        this.updateBluetoothBindingAutoPlay(binding.deviceId, !binding.autoPlay);
+      }
+    })
   }
 
   @Builder
@@ -1996,7 +2011,10 @@ struct Index {
           ListItem() {
             this.BluetoothBindingRow(this.settings.bluetoothBindings[slot], slot)
           }
-        }, (slot: number) => slot.toString())
+        }, (slot: number) => {
+          const binding = this.settings.bluetoothBindings[slot];
+          return `${slot}:${binding?.deviceId ?? ''}:${binding?.autoPlay ? 1 : 0}`;
+        })
         ListItem() {
           this.SettingsActionRow('⌁', '蓝牙设备识别权限', this.diagnostics, 'bluetoothPermission')
         }
@@ -2014,8 +2032,8 @@ struct Index {
         ListItem() {
           this.SettingsSwitchRow(
             '▶',
-            '蓝牙连接自动播放',
-            '连接蓝牙音频设备后，自动播放当前或上次收听的电台。',
+            '蓝牙自动播放总开关',
+            '总开关打开后，仅勾选了“连接后自动播放”的已绑定设备会启动播放。',
             'autoPlayOnBluetoothConnect'
           )
         }

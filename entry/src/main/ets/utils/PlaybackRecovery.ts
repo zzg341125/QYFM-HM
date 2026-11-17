@@ -154,12 +154,13 @@ export function shouldAutoPlayOnBluetoothConnect(
 }
 
 export function shouldStartBoundBluetoothPlayback(
-  autoPlay: boolean,
+  masterEnabled: boolean,
+  deviceAutoPlay: boolean,
   isPlaying: boolean,
   buffering: boolean,
   hasStation: boolean
 ): boolean {
-  return autoPlay && !isPlaying && !buffering && hasStation;
+  return masterEnabled && deviceAutoPlay && !isPlaying && !buffering && hasStation;
 }
 
 export function shouldStopForBluetoothDisconnect(

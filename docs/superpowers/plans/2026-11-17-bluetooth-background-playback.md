@@ -23,6 +23,7 @@
 ## Review Focus
 
 - Reconnecting an already stored device must preserve its `autoPlay` choice.
+- A new device defaults to `autoPlay=false`; the global switch only gates whether enabled device profiles may start playback.
 - Adding a fourth device must remove only the least recently connected record.
 - A non-auto-play device must not start playback merely because it reconnects.
 - User-manual pause must not be overridden by call-end resume.
@@ -84,7 +85,7 @@ Assert that a new device is added, an existing device keeps `autoPlay` while upd
 **Interfaces:**
 - Consumes: `rememberBluetoothBinding`, `findBluetoothBinding`.
 - Changes callback: `onBluetoothConnected(deviceId: string, deviceName: string): void`.
-- Produces: `shouldStartBoundBluetoothPlayback(autoPlay: boolean, isPlaying: boolean, buffering: boolean, hasStation: boolean): boolean`.
+- Produces: `shouldStartBoundBluetoothPlayback(masterEnabled: boolean, deviceAutoPlay: boolean, isPlaying: boolean, buffering: boolean, hasStation: boolean): boolean`.
 
 **Steps:**
 - [x] **Step 1: Add a failing test proving a matched `autoPlay=true` device starts after any elapsed time, while `autoPlay=false` does not.**
@@ -136,8 +137,14 @@ Assert that a new device is added, an existing device keeps `autoPlay` while upd
 - Version files for `1.0.41`.
 
 **Steps:**
-- [ ] **Step 1: Run the full Node test suite.**
-- [ ] **Step 2: Build signed HAP and APP in `F:\codex\qyfm-harmony`.**
-- [ ] **Step 3: Install on `5XM0226114020541` and verify version `1.0.41 / 1000041`.**
-- [ ] **Step 4: Verify background playback without AVSession card, audio-interrupt pause/resume, and Bluetooth binding persistence.**
-- [ ] **Step 5: Commit, tag, push, and publish GitHub release assets.**
+- [x] **Step 1: Run the full Node test suite.**
+- [x] **Step 2: Build signed HAP and APP in `F:\codex\qyfm-harmony`.**
+- [x] **Step 3: Install on `5XM0226114020541` and verify version `1.0.41 / 1000041`.**
+- [x] **Step 4: Verify background playback without an AVSession card and confirm Bluetooth binding toggle persistence on the connected device.**
+- [x] **Step 5: Verify call-interrupt pause/resume policy with unit tests and code review.**
+- [ ] **Step 6: Verify a real incoming call on the device; this requires an external call and is not automatable from the current environment.**
+- [ ] **Step 7: Commit, tag, push, and publish GitHub release assets.**
+
+## Execution Ledger
+
+- Final review: self-review (no subagent tool)

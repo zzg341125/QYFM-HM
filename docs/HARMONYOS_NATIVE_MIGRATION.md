@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 主界面 | `entry/src/main/ets/pages/Index.ets` | 播放、电台编辑、排序、设置、备份和升级 UI |
 | 电台仓库 | `entry/src/main/ets/data/StationRepository.ets` | Preferences 持久化、顺序恢复、JSON 备份 |
-| 播放控制 | `entry/src/main/ets/services/RadioController.ets` | AVPlayer、AVSession、睡眠定时和蓝牙续播调度 |
+| 播放控制 | `entry/src/main/ets/services/RadioController.ets` | AVPlayer、FFmpeg、睡眠定时和蓝牙续播调度 |
 | 蓝牙策略 | `entry/src/main/ets/services/BluetoothResumeManager.ets` | A2DP 状态、设备身份、可配置续播窗口 |
 | 后台任务 | `entry/src/main/ets/services/BackgroundTaskService.ets` | 音频长时任务 |
 | WebDAV | `entry/src/main/ets/services/WebDavBackupService.ets` | Basic Auth、时间戳多版本上传、版本索引与任意版本恢复 |
@@ -24,10 +24,11 @@
 
 1. 用户开始播放，且 A2DP 设备处于连接状态时，记录当前设备地址。
 2. 当前设备断开或音频输出回落到扬声器时，立即停止真实电台并释放后台任务。
-3. 保存断开设备身份与时间戳，同时隐藏 AVSession 和锁屏暂停卡片。
+3. 保存断开设备身份与时间戳，不创建 AVSession 或锁屏播放卡片。
 4. 只有同一设备地址重新进入 `STATE_CONNECTED` 且间隔不超过用户设置的窗口才自动续播。
 5. 手动暂停、停止、切换电台、睡眠定时停止都会取消待续播状态。
 6. 普通启动是否播放由“启动时自动播放”设置控制；蓝牙重连续播只接受断开前正在播放的同一设备。
+7. 最多记录 3 个蓝牙设备；新设备默认不自动播放。“蓝牙自动播放总开关”和单设备开关同时开启时，该设备连接后立即播放且不受续播窗口限制。
 
 设备地址使用 HarmonyOS 返回的虚拟 MAC。文档说明已配对设备在蓝牙开关不重启时地址保持稳定，适合本次重连窗口。
 
@@ -113,9 +114,8 @@ WebDAV 对话框中的“ZIP 文件”默认填写 `quyang_backup_20261112_10253
 - 应用声明允许传统 HTTP 广播流，并保留 radio.cn 官方专线刷新和旧 NZ 936 域名迁移。
 - B3 清晨音乐台保留连续 `64k MP3` 地址，避免 7 秒 HLS 分片的跨片等待；Icecast 元数据由兼容层清理后交给系统解码。
 - HTTPS 音频通过 TLS Socket 读取，HTTP 音频通过 TCP Socket 读取；兼容层移除 Icecast 内嵌元数据后，把连续 MP3/AAC 数据送入 FFmpeg。无扩展名的旧新西兰 `/fm994` 按 AAC 96 kbps 识别。
-- AVSession 锁屏台标只使用不超过 40960 字符的 URI；恢复备份中的大尺寸 Base64 台标会被省略，但不会影响电台播放。
+- 应用不再创建或发布 AVSession 媒体卡片：锁屏不显示“收音机已播放/暂停”卡片，系统仍保留后台长时任务要求的管理通知。
 - 蓝牙断开立即停止和蓝牙连接自动播放分别受设置项控制。连接自动播放可在应用已退到后台但仍保有音频进程时唤起上次电台；应用被系统彻底终止时，普通 HarmonyOS 应用无法仅凭蓝牙广播自行创建后台播放。
-- 暂停或停止时 AVSession 会转为 `STOP` 并停用，锁屏不再显示“收音机已暂停”的媒体卡片。
 - 快速起播使用 0.25 秒起播水位和 2.25 秒快速播放阈值；关闭快速起播时使用 0.8 秒水位和 2.8 秒阈值，缓冲上限均为 5 秒。
 - 播放器报错、直播流完成或连接超时时，先立即切换后续备用线路；没有备用线路时最多刷新重试 2 次，每次间隔 600 毫秒。
 - 应用回到前台时，若用户没有手动暂停且直播仍处于中断状态，会立即尝试恢复。

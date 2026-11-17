@@ -1053,22 +1053,17 @@ export class RadioController {
   }
 
   private async handleBluetoothConnected(deviceId: string, deviceName: string): Promise<void> {
-    const existingBinding = findBluetoothBinding(this.settings.bluetoothBindings, deviceId);
     this.settings.bluetoothBindings = rememberBluetoothBinding(
       this.settings.bluetoothBindings,
       deviceId,
       deviceName.length > 0 ? deviceName : deviceId,
       Date.now()
     );
-    const binding = findBluetoothBinding(this.settings.bluetoothBindings, deviceId);
-    if (existingBinding === undefined && this.settings.autoPlayOnBluetoothConnect &&
-      binding !== undefined) {
-      binding.autoPlay = true;
-    }
     this.notify();
     const activeBinding = findBluetoothBinding(this.settings.bluetoothBindings, deviceId);
     const boundStation = this.currentStation ?? this.defaultStation;
     if (activeBinding !== undefined && shouldStartBoundBluetoothPlayback(
+      this.settings.autoPlayOnBluetoothConnect,
       activeBinding.autoPlay,
       this.isPlaying,
       this.buffering,
