@@ -11,7 +11,7 @@ import {
 } from '../utils/QyfmBackupArchive';
 import { buildVersionedBackupFileName } from '../utils/BackupModel';
 
-const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.44';
+const USER_AGENT: string = 'QYFM-HarmonyOS/1.0.45';
 const MAX_ICON_BYTES: number = 2 * 1024 * 1024;
 
 export interface QyfmBackupArchivePackage {
@@ -83,7 +83,7 @@ export class BackupArchiveService {
       data: this.readBinary(path),
       exportedAt: now.toISOString(),
       stationCount: stations.length,
-      appVersion: '1.0.44'
+      appVersion: '1.0.45'
     };
   }
 

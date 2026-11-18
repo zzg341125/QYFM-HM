@@ -51,7 +51,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.44 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.45 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -207,6 +207,11 @@ export class RadioController {
   }
 
   async playStation(station: Station): Promise<void> {
+    if (this.audioInterrupted) {
+      this.statusText = '通话中，挂断后自动恢复播放';
+      this.notify();
+      return;
+    }
     this.playbackRequestedAt = Date.now();
     this.decoderAttemptsTried.clear();
     console.info(`起播计时开始: ${station.name}`);
@@ -293,6 +298,11 @@ export class RadioController {
   }
 
   async resume(reason: string): Promise<void> {
+    if (this.audioInterrupted) {
+      this.statusText = '通话中，挂断后自动恢复播放';
+      this.notify();
+      return;
+    }
     if (this.currentStation === undefined) {
       return;
     }
@@ -370,6 +380,11 @@ export class RadioController {
       await this.stop();
       this.sleepStoppedByTimer = true;
       this.statusText = '睡眠定时已结束';
+    }
+    if (this.audioInterrupted) {
+      this.statusText = '通话中，挂断后自动恢复播放';
+      this.notify();
+      return;
     }
     if (!shouldResumeAfterForeground(
       this.isPlaying ? 'playing' : 'stopped',
@@ -1080,6 +1095,7 @@ export class RadioController {
       });
     } else if (action === 'resume' && this.audioInterrupted) {
       console.info('音频中断结束，准备恢复直播');
+      this.audioInterrupted = false;
       this.resume('音频中断结束，继续播放').catch((error: BusinessError) => {
         console.error(`音频中断后恢复失败: ${error.message}`);
       });
