@@ -51,7 +51,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.43 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.44 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -725,14 +725,22 @@ export class RadioController {
       if (!this.waitingForBluetooth) {
         this.statusText = this.audioInterrupted ? '音频暂时被其他应用占用' : '已暂停';
       }
-      await this.updateSessionPlaybackState(false);
+      if (this.audioInterrupted) {
+        await this.updateSessionInterruptedState();
+      } else {
+        await this.updateSessionPlaybackState(false);
+      }
       this.notify();
     } else if (state === 'completed' || state === 'stopped') {
       this.isPlaying = false;
       this.clearBufferHint();
       this.clearBufferStallRecovery();
       this.buffering = false;
-      await this.updateSessionPlaybackState(false);
+      if (this.audioInterrupted) {
+        await this.updateSessionInterruptedState();
+      } else {
+        await this.updateSessionPlaybackState(false);
+      }
       if (this.pausedByUser || this.waitingForBluetooth || this.audioInterrupted) {
         this.statusText = this.pausedByUser ? '播放已停止' : '等待音频恢复';
         this.notify();
@@ -762,10 +770,24 @@ export class RadioController {
       this.buffering = false;
       this.retryCount = 0;
       this.isPlaying = true;
+      this.audioInterrupted = false;
       this.waitingForBluetooth = false;
       this.statusText = this.currentStation?.name ?? '正在播放';
       this.updateSessionPlaybackState(true).catch((error: BusinessError): void => {
         console.error(`更新 FFmpeg 媒体状态失败: ${error.message ?? '未知错误'}`);
+      });
+      this.notify();
+      return;
+    }
+    if (state === 'interrupted') {
+      this.clearWatchdog();
+      this.clearBufferHint();
+      this.buffering = false;
+      this.isPlaying = false;
+      this.audioInterrupted = true;
+      this.statusText = '音频暂时被其他应用占用，中断结束后自动续播';
+      this.updateSessionInterruptedState().catch((error: BusinessError): void => {
+        console.error(`更新 FFmpeg 中断媒体状态失败: ${error.message}`);
       });
       this.notify();
       return;
@@ -775,11 +797,17 @@ export class RadioController {
       this.buffering = false;
       this.clearBufferHint();
       if (!this.waitingForBluetooth) {
-        this.statusText = '已暂停';
+        this.statusText = this.audioInterrupted ? '音频暂时被其他应用占用' : '已暂停';
       }
-      this.updateSessionPlaybackState(false).catch((error: BusinessError): void => {
-        console.error(`隐藏 FFmpeg 暂停媒体状态失败: ${error.message}`);
-      });
+      if (this.audioInterrupted) {
+        this.updateSessionInterruptedState().catch((error: BusinessError): void => {
+          console.error(`更新 FFmpeg 中断媒体状态失败: ${error.message}`);
+        });
+      } else {
+        this.updateSessionPlaybackState(false).catch((error: BusinessError): void => {
+          console.error(`隐藏 FFmpeg 暂停媒体状态失败: ${error.message}`);
+        });
+      }
       this.notify();
       return;
     }
@@ -1044,12 +1072,14 @@ export class RadioController {
       hint = 'duck';
     }
     const action: AudioInterruptAction = audioInterruptAction(eventType, hint, this.pausedByUser);
-    if (action === 'pause') {
+    if (action === 'interrupt') {
       this.audioInterrupted = true;
+      console.info(`音频中断开始: ${hint}`);
       this.pauseForAudioInterruption().catch((error: BusinessError) => {
         console.error(`处理音频中断失败: ${error.message}`);
       });
     } else if (action === 'resume' && this.audioInterrupted) {
+      console.info('音频中断结束，准备恢复直播');
       this.resume('音频中断结束，继续播放').catch((error: BusinessError) => {
         console.error(`音频中断后恢复失败: ${error.message}`);
       });
@@ -1060,8 +1090,14 @@ export class RadioController {
     this.buffering = false;
     this.isPlaying = false;
     this.clearWatchdog();
-    await this.releaseActivePlayers(false);
-    await this.updateSessionPlaybackState(false);
+    const player = this.player;
+    if (player !== undefined && player.state === 'playing') {
+      await player.pause();
+    }
+    if (this.ffmpegPlayer !== undefined) {
+      await this.ffmpegPlayer.pauseForInterruption();
+    }
+    await this.updateSessionInterruptedState();
     this.statusText = '音频暂时被其他应用占用，中断结束后自动续播';
     this.notify();
   }
@@ -1131,6 +1167,19 @@ export class RadioController {
     });
     await this.session.deactivate();
     this.sessionActive = false;
+  }
+
+  private async updateSessionInterruptedState(): Promise<void> {
+    if (this.session === undefined) {
+      return;
+    }
+    if (!this.sessionActive) {
+      await this.session.activate();
+      this.sessionActive = true;
+    }
+    await this.session.setAVPlaybackState({
+      state: avSession.PlaybackState.PLAYBACK_STATE_PAUSE
+    });
   }
 
   private async handleBluetoothLost(deviceId: string): Promise<void> {

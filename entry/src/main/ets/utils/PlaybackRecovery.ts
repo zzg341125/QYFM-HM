@@ -103,7 +103,7 @@ export function buildPlaybackCandidates(station: PlaybackStationSource): Playbac
   return candidates;
 }
 
-export type AudioInterruptAction = 'pause' | 'resume' | 'none';
+export type AudioInterruptAction = 'interrupt' | 'resume' | 'none';
 
 export function audioInterruptAction(
   eventType: 'begin' | 'end',
@@ -114,7 +114,7 @@ export function audioInterruptAction(
     return 'none';
   }
   if (eventType === 'begin' && (hint === 'pause' || hint === 'stop')) {
-    return 'pause';
+    return 'interrupt';
   }
   if (eventType === 'end' && hint === 'resume') {
     return 'resume';

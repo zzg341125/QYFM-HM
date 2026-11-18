@@ -72,8 +72,8 @@ test('uses the single stream URL when an older station has no explicit lines', (
 });
 
 test('resumes after a temporary audio interruption but not after a user pause', () => {
-  assert.equal(audioInterruptAction('begin', 'pause', false), 'pause');
-  assert.equal(audioInterruptAction('begin', 'stop', false), 'pause');
+  assert.equal(audioInterruptAction('begin', 'pause', false), 'interrupt');
+  assert.equal(audioInterruptAction('begin', 'stop', false), 'interrupt');
   assert.equal(audioInterruptAction('end', 'resume', false), 'resume');
   assert.equal(audioInterruptAction('end', 'resume', true), 'none');
   assert.equal(audioInterruptAction('begin', 'pause', true), 'none');

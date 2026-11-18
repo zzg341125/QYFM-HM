@@ -15,7 +15,7 @@ import { shouldUseManagedHlsReader } from '../utils/HlsPlaylist';
 import { HlsStreamReader } from './HlsStreamReader';
 import { IcecastStreamRelay } from './IcecastStreamRelay';
 
-export type FfmpegPlayerState = 'buffering' | 'playing' | 'paused' | 'stopped' | 'error';
+export type FfmpegPlayerState = 'buffering' | 'playing' | 'paused' | 'interrupted' | 'stopped' | 'error';
 
 export interface FfmpegPlayerCallbacks {
   onState: (state: FfmpegPlayerState, message?: string) => void;
@@ -45,6 +45,7 @@ export class FfmpegAudioPlayer {
   private stopped: boolean = false;
   private fastStart: boolean = true;
   private managedHls: boolean = false;
+  private restartAfterInterruption: boolean = false;
   private pcmUnderrunEvents: number = 0;
   private lastPcmUnderrunLogAt: number = 0;
   private networkInputBytes: number = 0;
@@ -57,7 +58,7 @@ export class FfmpegAudioPlayer {
     if (begin && (event.hintType === audio.InterruptHint.INTERRUPT_HINT_PAUSE ||
       event.hintType === audio.InterruptHint.INTERRUPT_HINT_STOP)) {
       this.interrupted = true;
-      this.pause().catch((error: BusinessError) => {
+      this.pauseForInterruption().catch((error: BusinessError) => {
         console.error(`FFmpeg 音频中断暂停失败: ${error.message ?? '未知错误'}`);
       });
     } else if (!begin && event.hintType === audio.InterruptHint.INTERRUPT_HINT_RESUME &&
@@ -155,9 +156,31 @@ export class FfmpegAudioPlayer {
     this.callbacks.onState('paused');
   }
 
+  async pauseForInterruption(): Promise<void> {
+    this.paused = true;
+    this.restartAfterInterruption = this.renderer === undefined;
+    this.compressedQueue.clear();
+    this.pcmQueue.clear();
+    this.pcmReader.reset();
+    const renderer = this.renderer;
+    if (renderer !== undefined && renderer.state === audio.AudioState.STATE_RUNNING) {
+      await renderer.pause();
+    }
+    this.callbacks.onState('interrupted');
+  }
+
   async resume(): Promise<void> {
     this.paused = false;
     this.interrupted = false;
+    if (this.restartAfterInterruption && !this.stopped) {
+      this.restartAfterInterruption = false;
+      const context = this.context;
+      if (context !== undefined && this.sourceUrl.length > 0) {
+        await this.release();
+        await this.start(context, this.sourceUrl, this.fastStart);
+        return;
+      }
+    }
     if (shouldReconnectAfterPause(this.stopped)) {
       const releaseTask = this.releaseTask;
       if (releaseTask !== undefined) {
