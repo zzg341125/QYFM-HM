@@ -51,7 +51,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.45 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.46 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -95,6 +95,7 @@ export class RadioController {
   private currentCandidates: PlaybackCandidate[] = [];
   private buffering: boolean = false;
   private audioInterrupted: boolean = false;
+  private bluetoothLostDuringAudioInterruption: boolean = false;
   private stoppedForBluetoothDeviceId: string = '';
   private stoppedForBluetoothAt: number = 0;
   private pendingBluetoothBinding: BluetoothBinding | undefined = undefined;
@@ -244,6 +245,7 @@ export class RadioController {
     this.waitingForBluetooth = false;
     this.pausedByUser = false;
     this.audioInterrupted = false;
+    this.bluetoothLostDuringAudioInterruption = false;
     this.stoppedForBluetoothDeviceId = '';
     this.stoppedForBluetoothAt = 0;
     this.clearRecoveryTimers();
@@ -268,7 +270,7 @@ export class RadioController {
     }
     this.statusText = migratedStation.name;
     this.notify();
-    this.prepareSessionInBackground(migratedStation);
+    this.prepareSessionInBackground();
     this.prefetchOfficialStation(migratedStation, requestId);
     this.backgroundTasks.start(context).catch((error: BusinessError) => {
       console.error(`启动播放长时任务失败，不影响前台播放: ${error.message ?? '未知错误'}`);
@@ -327,6 +329,7 @@ export class RadioController {
       this.playRequestId++;
       this.pausedByUser = true;
       this.audioInterrupted = false;
+      this.bluetoothLostDuringAudioInterruption = false;
       this.bluetooth.cancelPending();
       this.bluetooth.setPlaybackActive(false);
     }
@@ -348,6 +351,7 @@ export class RadioController {
     this.playRequestId++;
     this.pausedByUser = true;
     this.audioInterrupted = false;
+    this.bluetoothLostDuringAudioInterruption = false;
     this.stoppedForBluetoothDeviceId = '';
     this.stoppedForBluetoothAt = 0;
     this.clearRecoveryTimers();
@@ -1096,6 +1100,13 @@ export class RadioController {
     } else if (action === 'resume' && this.audioInterrupted) {
       console.info('音频中断结束，准备恢复直播');
       this.audioInterrupted = false;
+      if (this.bluetoothLostDuringAudioInterruption) {
+        this.bluetoothLostDuringAudioInterruption = false;
+        this.pause('通话结束，蓝牙已断开，保持暂停', true).catch((error: BusinessError) => {
+          console.error(`应用通话结束暂停状态失败: ${error.message}`);
+        });
+        return;
+      }
       this.resume('音频中断结束，继续播放').catch((error: BusinessError) => {
         console.error(`音频中断后恢复失败: ${error.message}`);
       });
@@ -1118,11 +1129,8 @@ export class RadioController {
     this.notify();
   }
 
-  private prepareSessionInBackground(station: Station): void {
+  private prepareSessionInBackground(): void {
     this.ensureSession()
-      .then((): Promise<void> => {
-        return this.updateSessionMetadata(station);
-      })
       .then((): Promise<void> => {
         return this.updateSessionPlaybackState(this.isPlaying);
       })
@@ -1148,17 +1156,6 @@ export class RadioController {
     });
     await session.activate();
     this.sessionActive = true;
-  }
-
-  private async updateSessionMetadata(station: Station): Promise<void> {
-    if (this.session === undefined) {
-      return;
-    }
-    await this.session.setAVMetadata({
-      assetId: station.id,
-      title: station.name,
-      artist: 'QYFM HM'
-    });
   }
 
   private async updateSessionPlaybackState(isPlaying: boolean): Promise<void> {
@@ -1202,6 +1199,12 @@ export class RadioController {
     if (this.currentStation === undefined) {
       return;
     }
+    if (this.audioInterrupted) {
+      this.bluetoothLostDuringAudioInterruption = true;
+      this.statusText = '通话中蓝牙已断开，挂断后保持暂停';
+      this.notify();
+      return;
+    }
     if (!shouldStopForBluetoothDisconnect(
       this.settings.pauseOnBluetoothDisconnect,
       this.isPlaying,
@@ -1224,6 +1227,9 @@ export class RadioController {
     const normalizedId = deviceId.trim();
     if (normalizedId.length === 0) {
       return;
+    }
+    if (this.audioInterrupted) {
+      this.bluetoothLostDuringAudioInterruption = false;
     }
     const now = Date.now();
     const effectiveName = deviceName.trim().length > 0 ? deviceName.trim() : normalizedId;
