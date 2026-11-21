@@ -107,6 +107,20 @@ export class BluetoothResumeManager {
     this.resumeWindowMinutes = normalizeResumeWindowMinutes(minutes);
   }
 
+  hasConnectedDevice(): boolean {
+    try {
+      if (connection.getProfileConnectionState() ===
+        constant.ProfileConnectionState.STATE_CONNECTED) {
+        return true;
+      }
+      return (this.profile?.getConnectedDevices() ?? []).length > 0;
+    } catch (error) {
+      const businessError = error as BusinessError;
+      console.error(`读取当前蓝牙连接状态失败: ${businessError.message ?? '未知错误'}`);
+      return false;
+    }
+  }
+
   cancelPending(): void {
     this.pending = undefined;
     this.lostHandled = false;

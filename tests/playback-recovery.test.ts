@@ -5,6 +5,7 @@ import {
   buildLivePlaybackTuning,
   buildPlaybackCandidates,
   audioInterruptAction,
+  shouldPauseAfterAudioInterruption,
   sessionPlaybackMode,
   shouldAutoPlayOnBluetoothConnect,
   shouldStartBoundBluetoothPlayback,
@@ -77,6 +78,16 @@ test('resumes after a temporary audio interruption but not after a user pause', 
   assert.equal(audioInterruptAction('end', 'resume', false), 'resume');
   assert.equal(audioInterruptAction('end', 'resume', true), 'none');
   assert.equal(audioInterruptAction('begin', 'pause', true), 'none');
+});
+
+test('keeps playback paused after a call when Bluetooth was lost', () => {
+  assert.equal(shouldPauseAfterAudioInterruption(true, false), true);
+});
+
+test('resumes after a call when Bluetooth remains connected', () => {
+  assert.equal(shouldPauseAfterAudioInterruption(true, true), false);
+  assert.equal(shouldPauseAfterAudioInterruption(false, true), false);
+  assert.equal(shouldPauseAfterAudioInterruption(false, false), false);
 });
 
 test('resumes an interrupted live stream on foreground but respects manual pause', () => {

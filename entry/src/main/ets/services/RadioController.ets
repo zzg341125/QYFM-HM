@@ -23,6 +23,7 @@ import {
   shouldStopForBluetoothDisconnect,
   shouldResumeStoppedBluetooth,
   shouldResumeAfterForeground,
+  shouldPauseAfterAudioInterruption,
   shouldRecoverFromBufferStall
 } from '../utils/PlaybackRecovery';
 import { migrateLegacyStreamUrl } from '../utils/StreamUrlRepair';
@@ -51,7 +52,7 @@ export interface RadioSnapshot {
 export type RadioStateListener = (snapshot: RadioSnapshot) => void;
 
 const SESSION_TAG: string = 'QYFM_NATIVE_SESSION';
-const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.46 (AVPlayer)';
+const LIVE_USER_AGENT: string = 'QYFM-HarmonyOS/1.0.47 (AVPlayer)';
 
 export class RadioController {
   private static instance: RadioController | undefined = undefined;
@@ -96,6 +97,7 @@ export class RadioController {
   private buffering: boolean = false;
   private audioInterrupted: boolean = false;
   private bluetoothLostDuringAudioInterruption: boolean = false;
+  private bluetoothConnectedAtAudioInterruptionStart: boolean = false;
   private stoppedForBluetoothDeviceId: string = '';
   private stoppedForBluetoothAt: number = 0;
   private pendingBluetoothBinding: BluetoothBinding | undefined = undefined;
@@ -246,6 +248,7 @@ export class RadioController {
     this.pausedByUser = false;
     this.audioInterrupted = false;
     this.bluetoothLostDuringAudioInterruption = false;
+    this.bluetoothConnectedAtAudioInterruptionStart = false;
     this.stoppedForBluetoothDeviceId = '';
     this.stoppedForBluetoothAt = 0;
     this.clearRecoveryTimers();
@@ -330,6 +333,7 @@ export class RadioController {
       this.pausedByUser = true;
       this.audioInterrupted = false;
       this.bluetoothLostDuringAudioInterruption = false;
+      this.bluetoothConnectedAtAudioInterruptionStart = false;
       this.bluetooth.cancelPending();
       this.bluetooth.setPlaybackActive(false);
     }
@@ -352,6 +356,7 @@ export class RadioController {
     this.pausedByUser = true;
     this.audioInterrupted = false;
     this.bluetoothLostDuringAudioInterruption = false;
+    this.bluetoothConnectedAtAudioInterruptionStart = false;
     this.stoppedForBluetoothDeviceId = '';
     this.stoppedForBluetoothAt = 0;
     this.clearRecoveryTimers();
@@ -564,6 +569,12 @@ export class RadioController {
     const ffmpegPlayer = new FfmpegAudioPlayer({
       onState: (state: FfmpegPlayerState, message?: string): void => {
         this.handleFfmpegPlayerState(ffmpegPlayer, state, message);
+      },
+      onInterruptionBegin: (): void => {
+        this.beginAudioInterruption();
+      },
+      onInterruptionEnd: (): void => {
+        this.finishAudioInterruption();
       }
     });
     this.ffmpegPlayer = ffmpegPlayer;
@@ -1092,25 +1103,46 @@ export class RadioController {
     }
     const action: AudioInterruptAction = audioInterruptAction(eventType, hint, this.pausedByUser);
     if (action === 'interrupt') {
-      this.audioInterrupted = true;
       console.info(`音频中断开始: ${hint}`);
+      this.beginAudioInterruption();
       this.pauseForAudioInterruption().catch((error: BusinessError) => {
         console.error(`处理音频中断失败: ${error.message}`);
       });
     } else if (action === 'resume' && this.audioInterrupted) {
-      console.info('音频中断结束，准备恢复直播');
-      this.audioInterrupted = false;
-      if (this.bluetoothLostDuringAudioInterruption) {
-        this.bluetoothLostDuringAudioInterruption = false;
-        this.pause('通话结束，蓝牙已断开，保持暂停', true).catch((error: BusinessError) => {
-          console.error(`应用通话结束暂停状态失败: ${error.message}`);
-        });
-        return;
-      }
-      this.resume('音频中断结束，继续播放').catch((error: BusinessError) => {
-        console.error(`音频中断后恢复失败: ${error.message}`);
-      });
+      this.finishAudioInterruption();
     }
+  }
+
+  private beginAudioInterruption(): void {
+    if (this.audioInterrupted) {
+      return;
+    }
+    this.audioInterrupted = true;
+    this.bluetoothConnectedAtAudioInterruptionStart = this.bluetooth.hasConnectedDevice();
+  }
+
+  private finishAudioInterruption(): void {
+    if (!this.audioInterrupted) {
+      return;
+    }
+    console.info('音频中断结束，检查蓝牙状态后决定是否续播');
+    this.audioInterrupted = false;
+    const bluetoothConnectedNow = this.bluetooth.hasConnectedDevice();
+    const keepPaused = shouldPauseAfterAudioInterruption(
+      this.bluetoothConnectedAtAudioInterruptionStart,
+      bluetoothConnectedNow
+    );
+    this.bluetoothConnectedAtAudioInterruptionStart = false;
+    this.bluetoothLostDuringAudioInterruption = false;
+    if (keepPaused) {
+      this.pause('通话结束，蓝牙已断开，保持暂停', true).catch((error: BusinessError) => {
+        console.error(`应用通话结束暂停状态失败: ${error.message}`);
+      });
+      return;
+    }
+    this.resume('音频中断结束，继续播放').catch((error: BusinessError) => {
+      console.error(`音频中断后恢复失败: ${error.message}`);
+    });
   }
 
   private async pauseForAudioInterruption(): Promise<void> {

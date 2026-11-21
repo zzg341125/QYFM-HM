@@ -19,6 +19,8 @@ export type FfmpegPlayerState = 'buffering' | 'playing' | 'paused' | 'interrupte
 
 export interface FfmpegPlayerCallbacks {
   onState: (state: FfmpegPlayerState, message?: string) => void;
+  onInterruptionBegin: () => void;
+  onInterruptionEnd: () => void;
 }
 
 export class FfmpegAudioPlayer {
@@ -58,15 +60,14 @@ export class FfmpegAudioPlayer {
     if (begin && (event.hintType === audio.InterruptHint.INTERRUPT_HINT_PAUSE ||
       event.hintType === audio.InterruptHint.INTERRUPT_HINT_STOP)) {
       this.interrupted = true;
+      this.callbacks.onInterruptionBegin();
       this.pauseForInterruption().catch((error: BusinessError) => {
         console.error(`FFmpeg 音频中断暂停失败: ${error.message ?? '未知错误'}`);
       });
     } else if (!begin && event.hintType === audio.InterruptHint.INTERRUPT_HINT_RESUME &&
       this.interrupted) {
       this.interrupted = false;
-      this.resume().catch((error: BusinessError) => {
-        console.error(`FFmpeg 音频中断恢复失败: ${error.message ?? '未知错误'}`);
-      });
+      this.callbacks.onInterruptionEnd();
     }
   };
 

@@ -122,6 +122,13 @@ export function audioInterruptAction(
   return 'none';
 }
 
+export function shouldPauseAfterAudioInterruption(
+  bluetoothWasConnected: boolean,
+  bluetoothConnectedNow: boolean
+): boolean {
+  return bluetoothWasConnected && !bluetoothConnectedNow;
+}
+
 export function shouldResumeAfterForeground(
   playerState: string,
   pausedByUser: boolean,
